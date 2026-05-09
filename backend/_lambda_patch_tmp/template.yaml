@@ -1,0 +1,555 @@
+﻿AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+Description: Alertrix Lambda + API Gateway backend
+
+Parameters:
+  FirebaseServiceAccountJson:
+    Type: String
+    Default: ""
+    NoEcho: true
+    Description: Firebase service account JSON string used by Lambda to send FCM.
+  FirebaseServiceAccountJsonBase64:
+    Type: String
+    Default: ""
+    NoEcho: true
+    Description: Base64-encoded Firebase service account JSON for safer CLI parameter passing.
+  AlertFromEmail:
+    Type: String
+    Default: ""
+    Description: Verified SES sender email used for registration verification codes.
+
+Globals:
+  Function:
+    Runtime: nodejs20.x
+    Timeout: 10
+    MemorySize: 256
+    Environment:
+      Variables:
+        SENSOR_TABLE_NAME: !Ref SensorTable
+        ALERT_TABLE_NAME: !Ref AlertTable
+        WORK_ORDER_TABLE_NAME: !Ref WorkOrderTable
+        PUSH_TOKEN_TABLE_NAME: !Ref PushTokenTable
+        SETTINGS_TABLE_NAME: !Ref SettingsTable
+        USER_PROFILE_TABLE_NAME: !Ref UserProfileTable
+        AUTH_USER_TABLE_NAME: !Ref AuthUserTable
+        VERIFICATION_CODE_TABLE_NAME: !Ref VerificationCodeTable
+        ADMIN_TABLE_NAME: !Ref AdminTable
+        FIREBASE_SERVICE_ACCOUNT_JSON: !Ref FirebaseServiceAccountJson
+        FIREBASE_SERVICE_ACCOUNT_JSON_B64: !Ref FirebaseServiceAccountJsonBase64
+        ALERT_CRITICAL_TOPIC_ARN: !Ref AlertCriticalTopic
+        ALERT_WARNING_TOPIC_ARN: !Ref AlertWarningTopic
+        ALERT_FROM_EMAIL: !Ref AlertFromEmail
+        VERIFICATION_SES_REGION: ap-southeast-5
+        EMAIL_COOLDOWN_SECONDS: 600
+
+Resources:
+  ApiGateway:
+    Type: AWS::Serverless::Api
+    Properties:
+      StageName: prod
+      Cors:
+        AllowMethods: "'GET,POST,DELETE,OPTIONS'"
+        AllowHeaders: "'Content-Type,Authorization,X-User-Id,X-User-Role'"
+        AllowOrigin: "'*'"
+
+  SendRegisterCodeFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: src/handlers/sendRegisterCode.handler
+      CodeUri: ./
+      Events:
+        SendRegisterCode:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /api/auth/send-code
+            Method: post
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref VerificationCodeTable
+        - Statement:
+            - Effect: Allow
+              Action:
+                - ses:SendEmail
+              Resource: "*"
+
+  RegisterUserFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: src/handlers/registerUser.handler
+      CodeUri: ./
+      Events:
+        RegisterUser:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /api/auth/register
+            Method: post
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref VerificationCodeTable
+        - DynamoDBCrudPolicy:
+            TableName: !Ref AuthUserTable
+        - DynamoDBCrudPolicy:
+            TableName: !Ref UserProfileTable
+
+  LoginUserFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: src/handlers/loginUser.handler
+      CodeUri: ./
+      Events:
+        LoginUser:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /api/auth/login
+            Method: post
+      Policies:
+        - DynamoDBReadPolicy:
+            TableName: !Ref AuthUserTable
+
+  GetReadingsFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: src/handlers/getReadings.handler
+      CodeUri: ./
+      Events:
+        GetReadings:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /api/readings/latest
+            Method: get
+      Policies:
+        - DynamoDBReadPolicy:
+            TableName: !Ref SensorTable
+
+  GetTrendsFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: src/handlers/getTrends.handler
+      CodeUri: ./
+      Events:
+        GetTrends:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /api/trends
+            Method: get
+      Policies:
+        - DynamoDBReadPolicy:
+            TableName: !Ref SensorTable
+
+  GetAlertsFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: src/handlers/getAlerts.handler
+      CodeUri: ./
+      Events:
+        GetAlerts:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /api/alerts
+            Method: get
+      Policies:
+        - DynamoDBReadPolicy:
+            TableName: !Ref AlertTable
+
+  GetWorkOrdersFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: src/handlers/getWorkOrders.handler
+      CodeUri: ./
+      Events:
+        GetWorkOrders:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /api/work-orders
+            Method: get
+      Policies:
+        - DynamoDBReadPolicy:
+            TableName: !Ref WorkOrderTable
+
+  UpdateAlertStatusFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: src/handlers/updateAlertStatus.handler
+      CodeUri: ./
+      Events:
+        UpdateAlertStatus:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /api/alerts/{alertId}/status
+            Method: post
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref AlertTable
+
+  CreateWorkOrderFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: src/handlers/createWorkOrder.handler
+      CodeUri: ./
+      Events:
+        CreateWorkOrder:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /api/alerts/{alertId}/work-orders
+            Method: post
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref WorkOrderTable
+        - DynamoDBCrudPolicy:
+            TableName: !Ref AlertTable
+
+  RegisterPushTokenFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: src/handlers/registerPushToken.handler
+      CodeUri: ./
+      Events:
+        RegisterPushToken:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /api/push/register-token
+            Method: post
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref PushTokenTable
+
+  GetNotificationSettingsFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: src/handlers/getNotificationSettings.handler
+      CodeUri: ./
+      Events:
+        GetNotificationSettings:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /api/settings/notifications
+            Method: get
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref SettingsTable
+        - DynamoDBCrudPolicy:
+            TableName: !Ref UserProfileTable
+
+  UpdateNotificationSettingsFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: src/handlers/updateNotificationSettings.handler
+      CodeUri: ./
+      Events:
+        UpdateNotificationSettings:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /api/settings/notifications
+            Method: post
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref SettingsTable
+        - DynamoDBCrudPolicy:
+            TableName: !Ref UserProfileTable
+        - Statement:
+            - Effect: Allow
+              Action:
+                - sns:Subscribe
+                - sns:Unsubscribe
+              Resource:
+                - !Ref AlertCriticalTopic
+                - !Ref AlertWarningTopic
+
+  GetDeviceLocationFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: src/handlers/getDeviceLocation.handler
+      CodeUri: ./
+      Events:
+        GetDeviceLocation:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /api/settings/device-location
+            Method: get
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref SettingsTable
+
+  UpdateDeviceLocationFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: src/handlers/updateDeviceLocation.handler
+      CodeUri: ./
+      Events:
+        UpdateDeviceLocation:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /api/settings/device-location
+            Method: post
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref SettingsTable
+
+  GetAdminsFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: src/handlers/getAdmins.handler
+      CodeUri: ./
+      Events:
+        GetAdmins:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /api/admins
+            Method: get
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref AdminTable
+
+  CreateAdminFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: src/handlers/createAdmin.handler
+      CodeUri: ./
+      Events:
+        CreateAdmin:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /api/admins
+            Method: post
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref AdminTable
+
+  UpdateAdminFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: src/handlers/updateAdmin.handler
+      CodeUri: ./
+      Events:
+        UpdateAdmin:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /api/admins/{adminId}
+            Method: post
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref AdminTable
+
+  DeleteAdminFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: src/handlers/deleteAdmin.handler
+      CodeUri: ./
+      Events:
+        DeleteAdmin:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /api/admins/{adminId}
+            Method: delete
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref AdminTable
+
+  SetAdminStatusFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: src/handlers/setAdminStatus.handler
+      CodeUri: ./
+      Events:
+        SetAdminStatus:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /api/admins/{adminId}/status
+            Method: post
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref AdminTable
+
+  IngestSensorDataFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: src/handlers/ingestSensorData.handler
+      CodeUri: ./
+      Events:
+        IngestSensorData:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /api/sensors/ingest
+            Method: post
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref SensorTable
+        - DynamoDBCrudPolicy:
+            TableName: !Ref AlertTable
+        - DynamoDBCrudPolicy:
+            TableName: !Ref PushTokenTable
+        - DynamoDBCrudPolicy:
+            TableName: !Ref SettingsTable
+        - DynamoDBReadPolicy:
+            TableName: !Ref AdminTable
+        - Statement:
+            - Effect: Allow
+              Action:
+                - ses:SendEmail
+              Resource: "*"
+
+  SendTestAlertFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: src/handlers/sendTestAlert.handler
+      CodeUri: ./
+      Events:
+        SendTestAlert:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /api/push/test-alert
+            Method: post
+      Policies:
+        - DynamoDBReadPolicy:
+            TableName: !Ref PushTokenTable
+
+  SensorTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      TableName: alertrix-sensor-readings-my
+      AttributeDefinitions:
+        - AttributeName: sensorType
+          AttributeType: S
+        - AttributeName: capturedAt
+          AttributeType: S
+      KeySchema:
+        - AttributeName: sensorType
+          KeyType: HASH
+        - AttributeName: capturedAt
+          KeyType: RANGE
+
+  AlertTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      TableName: alertrix-alerts-my
+      AttributeDefinitions:
+        - AttributeName: alertId
+          AttributeType: S
+      KeySchema:
+        - AttributeName: alertId
+          KeyType: HASH
+
+  WorkOrderTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      TableName: alertrix-work-orders-my
+      AttributeDefinitions:
+        - AttributeName: workOrderId
+          AttributeType: S
+      KeySchema:
+        - AttributeName: workOrderId
+          KeyType: HASH
+
+  PushTokenTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      TableName: alertrix-push-tokens-my
+      AttributeDefinitions:
+        - AttributeName: token
+          AttributeType: S
+      KeySchema:
+        - AttributeName: token
+          KeyType: HASH
+
+  SettingsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      TableName: alertrix-settings-my
+      AttributeDefinitions:
+        - AttributeName: settingId
+          AttributeType: S
+      KeySchema:
+        - AttributeName: settingId
+          KeyType: HASH
+
+  UserProfileTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      TableName: alertrix-user-profiles-my
+      AttributeDefinitions:
+        - AttributeName: userId
+          AttributeType: S
+      KeySchema:
+        - AttributeName: userId
+          KeyType: HASH
+
+  AdminTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      TableName: alertrix-admins-my
+      AttributeDefinitions:
+        - AttributeName: adminId
+          AttributeType: S
+      KeySchema:
+        - AttributeName: adminId
+          KeyType: HASH
+
+  AuthUserTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      TableName: alertrix-auth-users-my
+      AttributeDefinitions:
+        - AttributeName: username
+          AttributeType: S
+      KeySchema:
+        - AttributeName: username
+          KeyType: HASH
+
+  VerificationCodeTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      TableName: alertrix-verification-codes-my
+      AttributeDefinitions:
+        - AttributeName: email
+          AttributeType: S
+      KeySchema:
+        - AttributeName: email
+          KeyType: HASH
+      TimeToLiveSpecification:
+        AttributeName: ttl
+        Enabled: true
+
+  AlertCriticalTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: alertrix-alert-critical-my
+
+  AlertWarningTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: alertrix-alert-warning-my
+
+Outputs:
+  ApiBaseUrl:
+    Description: API Gateway base URL
+    Value: !Sub "https://${ApiGateway}.execute-api.${AWS::Region}.amazonaws.com/prod"

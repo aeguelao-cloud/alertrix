@@ -1,0 +1,9 @@
+﻿{
+  "resource": "/api/alerts/{alertId}/status",
+  "path": "/api/alerts/ALERT-001/status",
+  "httpMethod": "POST",
+  "pathParameters": {
+    "alertId": "ALERT-001"
+  },
+  "body": "{\"status\":\"CONFIRMED\",\"actorRole\":\"Operator\"}"
+}

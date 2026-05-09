@@ -1,0 +1,148 @@
+<w:tblPr><w:tblW w:type="auto" w:w="0"/><w:jc w:val="center"/><w:tblLook w:firstColumn="1" w:firstRow="1" w:lastColumn="0" w:lastRow="0" w:noHBand="0" w:noVBand="1" w:val="04A0"/></w:tblPr><w:tblGrid><w:gridCol w:w="9972"/></w:tblGrid><w:tr><w:tc><w:tcPr><w:tcW w:type="dxa" w:w="9972"/><w:shd w:fill="0E97A7"/><w:tcMar><w:top w:w="220" w:type="dxa"/><w:start w:w="180" w:type="dxa"/><w:bottom w:w="220" w:type="dxa"/><w:end w:w="180" w:type="dxa"/></w:tcMar></w:tcPr><w:p><w:r><w:rPr><w:rFonts w:ascii="Arial" w:hAnsi="Arial" w:eastAsia="Arial"/><w:b/><w:color w:val="FFFFFF"/><w:sz w:val="44"/></w:rPr><w:t>Alertrix Dashboard前端页面逐页修改整合文档
+适用范围：Dashboard、Sensor Trends、Alert Center、Settings 四个页面命名原则：界面中统一去掉 “403 / CAT403” 等课程编号，统一使用正式产品化命名。
+<w:tblPr><w:tblW w:type="auto" w:w="0"/><w:jc w:val="center"/><w:tblLook w:firstColumn="1" w:firstRow="1" w:lastColumn="0" w:lastRow="0" w:noHBand="0" w:noVBand="1" w:val="04A0"/></w:tblPr><w:tblGrid><w:gridCol w:w="9972"/></w:tblGrid><w:tr><w:tc><w:tcPr><w:tcW w:type="dxa" w:w="9972"/><w:shd w:fill="EAF6F8"/><w:tcMar><w:top w:w="140" w:type="dxa"/><w:start w:w="160" w:type="dxa"/><w:bottom w:w="140" w:type="dxa"/><w:end w:w="160" w:type="dxa"/></w:tcMar></w:tcPr><w:p><w:r><w:rPr><w:rFonts w:ascii="Arial" w:hAnsi="Arial" w:eastAsia="Microsoft YaHei"/></w:rPr><w:t>文档目的：把当前已经成型的 Alertrix Web 前端，进一步从“课程项目原型”打磨成“可展示的正式监控平台界面”，并给出逐页修改方向、文案替换建议、组件补充清单和实施优先级。
+1. 命名统一原则
+- 产品名称统一使用 Alertrix Dashboard。
+- 站点名称统一使用 Pilot Monitoring Site。
+- 页面内不再出现 403、CAT403、课程编号、作业编号等教学属性标题。
+- 如果需要体现项目背景，可在答辩或文档正文中说明，但不建议直接放入界面主标题。
+2. 当前版本总体评价
+- 当前版本已经完成了基础信息架构：总览、系统摘要、快捷操作、设备卡、趋势预览、告警页、设置页都已具备雏形。
+- 主要问题已经不再是“有没有页面”，而是“页面是否足够成熟、是否像正式 Web 监控平台”。
+- 现阶段最需要提升的是信息密度、卡片完成度、图表表达力、操作入口的可点击感，以及各页面的内容丰满度。
+3. 设计总原则
+- Web 页面要更紧凑，不要让单张卡片占据过高的垂直空间。
+- 每一块区域都要有足够的信息量，避免“大容器 + 两三行字”的占位感。
+- 首页应优先回答四个问题：现在是否安全、是否有告警、哪个设备异常、下一步应该做什么。
+- 所有页面都要保留操作闭环，让按钮、筛选、列表、详情入口看起来都像真实系统组件。
+4. Dashboard 页面修改清单
+4.1 顶部总览区
+- 左侧统一改为：Alertrix Dashboard / Pilot Monitoring Site。
+- 保留 Overall Status、Active Alerts、Devices Online、Last Sync 四个核心指标。
+- 顶部色块高度适当降低，让首屏更多空间留给设备状态和趋势内容。
+- 右侧增加真实按钮：View Alerts、Open Trends、Threshold Settings。
+4.2 System Summary 区块
+- 保留 Highest Severity、Active Alerts、Last Alert、Recommendation。
+- 新增 Monitored Devices、Last Data Refresh、System Health。
+- 建议文案：Highest Severity: Normal；System Health: Stable；Recommendation: All monitored parameters are within configured safe thresholds。
+- 视觉上采用“浅色标签 + 深色值”的形式，压缩行距，减少空洞感。
+4.3 Quick Actions 区块
+- 不要继续使用横向铺满的浅色长条按钮，改为 2~4 个独立 action card。
+- 建议按钮：View Alerts、Acknowledge Latest、Threshold Settings、View Device Status。
+- 每个 action card 增加图标和一句简短说明，强化“可点击”和“可操作”感。
+4.4 设备卡片区
+- 保留 2x2 布局，但每张卡片高度减少约 35%~40%。
+- 每张卡片统一展示：设备名、状态 badge、在线状态、当前值、单位、1h 变化、Warning 阈值、Critical 阈值、Last Update、Details / History 按钮。
+- 重要数字不要贴在卡片底部，应放在中上区域，让用户一眼读到数值。
+- 如条件允许，在卡片底部加入 mini trend 或 sparkline，提升完成度。
+4.6 Risk Summary 与 Trend Preview
+- Risk Summary 不建议只保留三条无数字的横线，改成 Critical / Warning / Normal 三个统计块，或至少在条形上显示数量。
+- Trend Preview 不应只是一条平线，需要补上单位、时间轴刻度、阈值标签、Latest value、Peak value。
+- 趋势区标题右侧保留 1H / 6H / 24H / 7D 切换，但样式应更像 segmented control。
+4.7 Recent Alert Log
+- 即使当前没有告警，也建议保留表头结构：Time、Device、Type、Severity、Status、Action。
+- 标题右侧增加 View All。
+- 空状态建议改为两行：No active alerts. / All monitored parameters are within configured safe thresholds。
+4.5 建议的设备字段
+<w:tblPr><w:tblStyle w:val="TableGrid"/><w:tblW w:type="auto" w:w="0"/><w:jc w:val="center"/><w:tblLook w:firstColumn="1" w:firstRow="1" w:lastColumn="0" w:lastRow="0" w:noHBand="0" w:noVBand="1" w:val="04A0"/></w:tblPr><w:tblGrid><w:gridCol w:w="2493"/><w:gridCol w:w="2493"/><w:gridCol w:w="2493"/><w:gridCol w:w="2493"/></w:tblGrid><w:tr><w:tc><w:tcPr><w:tcW w:type="dxa" w:w="2493"/><w:shd w:fill="D7EEF2"/><w:tcMar><w:top w:w="110" w:type="dxa"/><w:start w:w="110" w:type="dxa"/><w:bottom w:w="110" w:type="dxa"/><w:end w:w="110" w:type="dxa"/></w:tcMar></w:tcPr><w:p><w:r><w:t>设备
+<w:tcPr><w:tcW w:type="dxa" w:w="2493"/><w:shd w:fill="D7EEF2"/><w:tcMar><w:top w:w="110" w:type="dxa"/><w:start w:w="110" w:type="dxa"/><w:bottom w:w="110" w:type="dxa"/><w:end w:w="110" w:type="dxa"/></w:tcMar></w:tcPr><w:p><w:r><w:t>当前值与单位
+<w:tcPr><w:tcW w:type="dxa" w:w="2493"/><w:shd w:fill="D7EEF2"/><w:tcMar><w:top w:w="110" w:type="dxa"/><w:start w:w="110" w:type="dxa"/><w:bottom w:w="110" w:type="dxa"/><w:end w:w="110" w:type="dxa"/></w:tcMar></w:tcPr><w:p><w:r><w:t>状态与阈值
+<w:tcPr><w:tcW w:type="dxa" w:w="2493"/><w:shd w:fill="D7EEF2"/><w:tcMar><w:top w:w="110" w:type="dxa"/><w:start w:w="110" w:type="dxa"/><w:bottom w:w="110" w:type="dxa"/><w:end w:w="110" w:type="dxa"/></w:tcMar></w:tcPr><w:p><w:r><w:t>附加信息
+<w:tc><w:tcPr><w:tcW w:type="dxa" w:w="2493"/><w:tcMar><w:top w:w="100" w:type="dxa"/><w:start w:w="110" w:type="dxa"/><w:bottom w:w="100" w:type="dxa"/><w:end w:w="110" w:type="dxa"/></w:tcMar><w:vAlign w:val="center"/></w:tcPr><w:p><w:r><w:t>Water Level Sensor
+<w:tcPr><w:tcW w:type="dxa" w:w="2493"/><w:tcMar><w:top w:w="100" w:type="dxa"/><w:start w:w="110" w:type="dxa"/><w:bottom w:w="100" w:type="dxa"/><w:end w:w="110" w:type="dxa"/></w:tcMar><w:vAlign w:val="center"/></w:tcPr><w:p><w:r><w:t>0% / Tank Capacity
+<w:tcPr><w:tcW w:type="dxa" w:w="2493"/><w:tcMar><w:top w:w="100" w:type="dxa"/><w:start w:w="110" w:type="dxa"/><w:bottom w:w="100" w:type="dxa"/><w:end w:w="110" w:type="dxa"/></w:tcMar><w:vAlign w:val="center"/></w:tcPr><w:p><w:r><w:t>Normal；Warning 70%；Critical 85%
+<w:tcPr><w:tcW w:type="dxa" w:w="2493"/><w:tcMar><w:top w:w="100" w:type="dxa"/><w:start w:w="110" w:type="dxa"/><w:bottom w:w="100" w:type="dxa"/><w:end w:w="110" w:type="dxa"/></w:tcMar><w:vAlign w:val="center"/></w:tcPr><w:p><w:r><w:t>Online；1h Change；Last Update；Details；History
+<w:tc><w:tcPr><w:tcW w:type="dxa" w:w="2493"/><w:tcMar><w:top w:w="100" w:type="dxa"/><w:start w:w="110" w:type="dxa"/><w:bottom w:w="100" w:type="dxa"/><w:end w:w="110" w:type="dxa"/></w:tcMar><w:vAlign w:val="center"/></w:tcPr><w:p><w:r><w:t>Vibration Sensor
+<w:tcPr><w:tcW w:type="dxa" w:w="2493"/><w:tcMar><w:top w:w="100" w:type="dxa"/><w:start w:w="110" w:type="dxa"/><w:bottom w:w="100" w:type="dxa"/><w:end w:w="110" w:type="dxa"/></w:tcMar><w:vAlign w:val="center"/></w:tcPr><w:p><w:r><w:t>0.0 / mm/s RMS
+<w:tcPr><w:tcW w:type="dxa" w:w="2493"/><w:tcMar><w:top w:w="100" w:type="dxa"/><w:start w:w="110" w:type="dxa"/><w:bottom w:w="100" w:type="dxa"/><w:end w:w="110" w:type="dxa"/></w:tcMar><w:vAlign w:val="center"/></w:tcPr><w:p><w:r><w:t>Normal；Warning 2.8；Critical 4.0
+<w:tcPr><w:tcW w:type="dxa" w:w="2493"/><w:tcMar><w:top w:w="100" w:type="dxa"/><w:start w:w="110" w:type="dxa"/><w:bottom w:w="100" w:type="dxa"/><w:end w:w="110" w:type="dxa"/></w:tcMar><w:vAlign w:val="center"/></w:tcPr><w:p><w:r><w:t>Online；1h Change；Last Update；Details；History
+<w:tc><w:tcPr><w:tcW w:type="dxa" w:w="2493"/><w:tcMar><w:top w:w="100" w:type="dxa"/><w:start w:w="110" w:type="dxa"/><w:bottom w:w="100" w:type="dxa"/><w:end w:w="110" w:type="dxa"/></w:tcMar><w:vAlign w:val="center"/></w:tcPr><w:p><w:r><w:t>Temperature Sensor
+<w:tcPr><w:tcW w:type="dxa" w:w="2493"/><w:tcMar><w:top w:w="100" w:type="dxa"/><w:start w:w="110" w:type="dxa"/><w:bottom w:w="100" w:type="dxa"/><w:end w:w="110" w:type="dxa"/></w:tcMar><w:vAlign w:val="center"/></w:tcPr><w:p><w:r><w:t>0.0 / °C
+<w:tcPr><w:tcW w:type="dxa" w:w="2493"/><w:tcMar><w:top w:w="100" w:type="dxa"/><w:start w:w="110" w:type="dxa"/><w:bottom w:w="100" w:type="dxa"/><w:end w:w="110" w:type="dxa"/></w:tcMar><w:vAlign w:val="center"/></w:tcPr><w:p><w:r><w:t>Normal；Warning 35；Critical 45
+<w:tcPr><w:tcW w:type="dxa" w:w="2493"/><w:tcMar><w:top w:w="100" w:type="dxa"/><w:start w:w="110" w:type="dxa"/><w:bottom w:w="100" w:type="dxa"/><w:end w:w="110" w:type="dxa"/></w:tcMar><w:vAlign w:val="center"/></w:tcPr><w:p><w:r><w:t>Online；1h Change；Last Update；Details；History
+<w:tc><w:tcPr><w:tcW w:type="dxa" w:w="2493"/><w:tcMar><w:top w:w="100" w:type="dxa"/><w:start w:w="110" w:type="dxa"/><w:bottom w:w="100" w:type="dxa"/><w:end w:w="110" w:type="dxa"/></w:tcMar><w:vAlign w:val="center"/></w:tcPr><w:p><w:r><w:t>Humidity Sensor
+<w:tcPr><w:tcW w:type="dxa" w:w="2493"/><w:tcMar><w:top w:w="100" w:type="dxa"/><w:start w:w="110" w:type="dxa"/><w:bottom w:w="100" w:type="dxa"/><w:end w:w="110" w:type="dxa"/></w:tcMar><w:vAlign w:val="center"/></w:tcPr><w:p><w:r><w:t>0 / %RH
+<w:tcPr><w:tcW w:type="dxa" w:w="2493"/><w:tcMar><w:top w:w="100" w:type="dxa"/><w:start w:w="110" w:type="dxa"/><w:bottom w:w="100" w:type="dxa"/><w:end w:w="110" w:type="dxa"/></w:tcMar><w:vAlign w:val="center"/></w:tcPr><w:p><w:r><w:t>Normal；Warning / Critical 自定义
+<w:tcPr><w:tcW w:type="dxa" w:w="2493"/><w:tcMar><w:top w:w="100" w:type="dxa"/><w:start w:w="110" w:type="dxa"/><w:bottom w:w="100" w:type="dxa"/><w:end w:w="110" w:type="dxa"/></w:tcMar><w:vAlign w:val="center"/></w:tcPr><w:p><w:r><w:t>Online；1h Change；Last Update；Details；History
+5. Sensor Trends 页面修改清单
+- 页面标题统一使用 Sensor Trends。
+- 不要继续维持“一页四个大空白趋势框”的布局。
+- 顶部增加筛选区：Device、Metric、Time Range、Refresh、Export；至少优先实现 Device 和 Time Range。
+- 页面主体改成“一个主图 + 统计摘要 + 其他设备趋势缩略卡”的结构。
+5.1 推荐页面结构
+- 主图区域：显示当前选中的趋势图，包含折线、Warning 阈值线、Critical 阈值线、当前值标记。
+- 图表摘要：Latest、Average、Peak、Min、Threshold Breaches。
+- 下方缩略卡：Water Level、Vibration、Temperature、Humidity 四张小趋势卡。
+- 页面底部可补一个简短历史记录表：Timestamp、Device、Value、Unit、Status。
+6. Alert Center 页面修改清单
+- 页面标题统一改为 Alert Center，不再使用 Alert Dashboard。
+- 页面顶部增加 summary cards：Active Alerts、Critical Alerts、Acknowledged Today、Resolved Alerts。
+- 筛选区保留 All / Normal / Warning / Critical，并可在后续追加 Active / Acknowledged / Resolved。
+- 主体区使用表格或告警卡片列表，不要只停留在空状态提示。
+6.1 告警列表建议字段
+<w:tblPr><w:tblStyle w:val="TableGrid"/><w:tblW w:type="auto" w:w="0"/><w:jc w:val="center"/><w:tblLook w:firstColumn="1" w:firstRow="1" w:lastColumn="0" w:lastRow="0" w:noHBand="0" w:noVBand="1" w:val="04A0"/></w:tblPr><w:tblGrid><w:gridCol w:w="1425"/><w:gridCol w:w="1425"/><w:gridCol w:w="1425"/><w:gridCol w:w="1425"/><w:gridCol w:w="1425"/><w:gridCol w:w="1425"/><w:gridCol w:w="1425"/></w:tblGrid><w:tr><w:tc><w:tcPr><w:tcW w:type="dxa" w:w="1425"/><w:shd w:fill="D7EEF2"/><w:tcMar><w:top w:w="110" w:type="dxa"/><w:start w:w="110" w:type="dxa"/><w:bottom w:w="110" w:type="dxa"/><w:end w:w="110" w:type="dxa"/></w:tcMar></w:tcPr><w:p><w:r><w:t>Time
+<w:tcPr><w:tcW w:type="dxa" w:w="1425"/><w:shd w:fill="D7EEF2"/><w:tcMar><w:top w:w="110" w:type="dxa"/><w:start w:w="110" w:type="dxa"/><w:bottom w:w="110" w:type="dxa"/><w:end w:w="110" w:type="dxa"/></w:tcMar></w:tcPr><w:p><w:r><w:t>Device
+<w:tcPr><w:tcW w:type="dxa" w:w="1425"/><w:shd w:fill="D7EEF2"/><w:tcMar><w:top w:w="110" w:type="dxa"/><w:start w:w="110" w:type="dxa"/><w:bottom w:w="110" w:type="dxa"/><w:end w:w="110" w:type="dxa"/></w:tcMar></w:tcPr><w:p><w:r><w:t>Alert Type
+<w:tcPr><w:tcW w:type="dxa" w:w="1425"/><w:shd w:fill="D7EEF2"/><w:tcMar><w:top w:w="110" w:type="dxa"/><w:start w:w="110" w:type="dxa"/><w:bottom w:w="110" w:type="dxa"/><w:end w:w="110" w:type="dxa"/></w:tcMar></w:tcPr><w:p><w:r><w:t>Severity
+<w:tcPr><w:tcW w:type="dxa" w:w="1425"/><w:shd w:fill="D7EEF2"/><w:tcMar><w:top w:w="110" w:type="dxa"/><w:start w:w="110" w:type="dxa"/><w:bottom w:w="110" w:type="dxa"/><w:end w:w="110" w:type="dxa"/></w:tcMar></w:tcPr><w:p><w:r><w:t>Trigger Value
+<w:tcPr><w:tcW w:type="dxa" w:w="1425"/><w:shd w:fill="D7EEF2"/><w:tcMar><w:top w:w="110" w:type="dxa"/><w:start w:w="110" w:type="dxa"/><w:bottom w:w="110" w:type="dxa"/><w:end w:w="110" w:type="dxa"/></w:tcMar></w:tcPr><w:p><w:r><w:t>Status
+<w:tcPr><w:tcW w:type="dxa" w:w="1425"/><w:shd w:fill="D7EEF2"/><w:tcMar><w:top w:w="110" w:type="dxa"/><w:start w:w="110" w:type="dxa"/><w:bottom w:w="110" w:type="dxa"/><w:end w:w="110" w:type="dxa"/></w:tcMar></w:tcPr><w:p><w:r><w:t>Action
+<w:tc><w:tcPr><w:tcW w:type="dxa" w:w="1425"/><w:tcMar><w:top w:w="100" w:type="dxa"/><w:start w:w="110" w:type="dxa"/><w:bottom w:w="100" w:type="dxa"/><w:end w:w="110" w:type="dxa"/></w:tcMar></w:tcPr><w:p><w:r><w:t>09:20
+<w:tcPr><w:tcW w:type="dxa" w:w="1425"/><w:tcMar><w:top w:w="100" w:type="dxa"/><w:start w:w="110" w:type="dxa"/><w:bottom w:w="100" w:type="dxa"/><w:end w:w="110" w:type="dxa"/></w:tcMar></w:tcPr><w:p><w:r><w:t>Water Level Sensor
+<w:tcPr><w:tcW w:type="dxa" w:w="1425"/><w:tcMar><w:top w:w="100" w:type="dxa"/><w:start w:w="110" w:type="dxa"/><w:bottom w:w="100" w:type="dxa"/><w:end w:w="110" w:type="dxa"/></w:tcMar></w:tcPr><w:p><w:r><w:t>Flood Warning
+<w:tcPr><w:tcW w:type="dxa" w:w="1425"/><w:tcMar><w:top w:w="100" w:type="dxa"/><w:start w:w="110" w:type="dxa"/><w:bottom w:w="100" w:type="dxa"/><w:end w:w="110" w:type="dxa"/></w:tcMar></w:tcPr><w:p><w:r><w:t>Warning
+<w:tcPr><w:tcW w:type="dxa" w:w="1425"/><w:tcMar><w:top w:w="100" w:type="dxa"/><w:start w:w="110" w:type="dxa"/><w:bottom w:w="100" w:type="dxa"/><w:end w:w="110" w:type="dxa"/></w:tcMar></w:tcPr><w:p><w:r><w:t>73%
+<w:tcPr><w:tcW w:type="dxa" w:w="1425"/><w:tcMar><w:top w:w="100" w:type="dxa"/><w:start w:w="110" w:type="dxa"/><w:bottom w:w="100" w:type="dxa"/><w:end w:w="110" w:type="dxa"/></w:tcMar></w:tcPr><w:p><w:r><w:t>Active
+<w:tcPr><w:tcW w:type="dxa" w:w="1425"/><w:tcMar><w:top w:w="100" w:type="dxa"/><w:start w:w="110" w:type="dxa"/><w:bottom w:w="100" w:type="dxa"/><w:end w:w="110" w:type="dxa"/></w:tcMar></w:tcPr><w:p><w:r><w:t>View / Acknowledge
+<w:tc><w:tcPr><w:tcW w:type="dxa" w:w="1425"/><w:tcMar><w:top w:w="100" w:type="dxa"/><w:start w:w="110" w:type="dxa"/><w:bottom w:w="100" w:type="dxa"/><w:end w:w="110" w:type="dxa"/></w:tcMar></w:tcPr><w:p><w:r><w:t>09:05
+<w:tcPr><w:tcW w:type="dxa" w:w="1425"/><w:tcMar><w:top w:w="100" w:type="dxa"/><w:start w:w="110" w:type="dxa"/><w:bottom w:w="100" w:type="dxa"/><w:end w:w="110" w:type="dxa"/></w:tcMar></w:tcPr><w:p><w:r><w:t>Vibration Sensor
+<w:tcPr><w:tcW w:type="dxa" w:w="1425"/><w:tcMar><w:top w:w="100" w:type="dxa"/><w:start w:w="110" w:type="dxa"/><w:bottom w:w="100" w:type="dxa"/><w:end w:w="110" w:type="dxa"/></w:tcMar></w:tcPr><w:p><w:r><w:t>Abnormal Vibration
+<w:tcPr><w:tcW w:type="dxa" w:w="1425"/><w:tcMar><w:top w:w="100" w:type="dxa"/><w:start w:w="110" w:type="dxa"/><w:bottom w:w="100" w:type="dxa"/><w:end w:w="110" w:type="dxa"/></w:tcMar></w:tcPr><w:p><w:r><w:t>Critical
+<w:tcPr><w:tcW w:type="dxa" w:w="1425"/><w:tcMar><w:top w:w="100" w:type="dxa"/><w:start w:w="110" w:type="dxa"/><w:bottom w:w="100" w:type="dxa"/><w:end w:w="110" w:type="dxa"/></w:tcMar></w:tcPr><w:p><w:r><w:t>4.2
+<w:tcPr><w:tcW w:type="dxa" w:w="1425"/><w:tcMar><w:top w:w="100" w:type="dxa"/><w:start w:w="110" w:type="dxa"/><w:bottom w:w="100" w:type="dxa"/><w:end w:w="110" w:type="dxa"/></w:tcMar></w:tcPr><w:p><w:r><w:t>Acknowledged
+<w:tcPr><w:tcW w:type="dxa" w:w="1425"/><w:tcMar><w:top w:w="100" w:type="dxa"/><w:start w:w="110" w:type="dxa"/><w:bottom w:w="100" w:type="dxa"/><w:end w:w="110" w:type="dxa"/></w:tcMar></w:tcPr><w:p><w:r><w:t>View
+- 空状态文案建议改为：No alerts match the selected filter. / The monitoring system is currently operating within safe thresholds。
+- 后续可补一个告警详情弹窗，字段包括 Alert ID、Device Name、Triggered At、Current Value、Threshold、Severity、Recommended Action。
+7. Settings 页面修改清单
+- Settings 页当前最薄弱，不应只保留 Refresh Interval、Site Profile、Current Role 三个项目。
+- 建议扩展为四个 section：Monitoring Settings、Alert Thresholds、Notification Settings、Site and User。
+- 右侧操作文字可以从 Edit 扩展为 Edit / Configure / Manage，并增加箭头图标，提升可进入感。
+7.1 推荐设置分区
+- Monitoring Settings：Auto Refresh Interval、Default Trend Window、Dashboard Refresh Mode。
+- Alert Thresholds：Water / Vibration / Temperature / Humidity 的 Warning 与 Critical 阈值。
+- Notification Settings：Push Notifications、Email Notifications、Critical Alerts Only、Alert Sound。
+- Site and User：Site Name、Current Role、Assigned Devices。
+8. 统一文案替换建议
+<w:tblPr><w:tblStyle w:val="TableGrid"/><w:tblW w:type="auto" w:w="0"/><w:jc w:val="center"/><w:tblLook w:firstColumn="1" w:firstRow="1" w:lastColumn="0" w:lastRow="0" w:noHBand="0" w:noVBand="1" w:val="04A0"/></w:tblPr><w:tblGrid><w:gridCol w:w="4986"/><w:gridCol w:w="4986"/></w:tblGrid><w:tr><w:tc><w:tcPr><w:tcW w:type="dxa" w:w="4986"/><w:shd w:fill="D7EEF2"/><w:tcMar><w:top w:w="110" w:type="dxa"/><w:start w:w="110" w:type="dxa"/><w:bottom w:w="110" w:type="dxa"/><w:end w:w="110" w:type="dxa"/></w:tcMar></w:tcPr><w:p><w:r><w:t>原文案 / 不推荐
+<w:tcPr><w:tcW w:type="dxa" w:w="4986"/><w:shd w:fill="D7EEF2"/><w:tcMar><w:top w:w="110" w:type="dxa"/><w:start w:w="110" w:type="dxa"/><w:bottom w:w="110" w:type="dxa"/><w:end w:w="110" w:type="dxa"/></w:tcMar></w:tcPr><w:p><w:r><w:t>替换后 / 推荐
+<w:tc><w:tcPr><w:tcW w:type="dxa" w:w="4986"/><w:tcMar><w:top w:w="100" w:type="dxa"/><w:start w:w="110" w:type="dxa"/><w:bottom w:w="100" w:type="dxa"/><w:end w:w="110" w:type="dxa"/></w:tcMar></w:tcPr><w:p><w:r><w:t>CAT403 Pilot Site
+<w:tcPr><w:tcW w:type="dxa" w:w="4986"/><w:tcMar><w:top w:w="100" w:type="dxa"/><w:start w:w="110" w:type="dxa"/><w:bottom w:w="100" w:type="dxa"/><w:end w:w="110" w:type="dxa"/></w:tcMar></w:tcPr><w:p><w:r><w:t>Pilot Monitoring Site
+<w:tc><w:tcPr><w:tcW w:type="dxa" w:w="4986"/><w:tcMar><w:top w:w="100" w:type="dxa"/><w:start w:w="110" w:type="dxa"/><w:bottom w:w="100" w:type="dxa"/><w:end w:w="110" w:type="dxa"/></w:tcMar></w:tcPr><w:p><w:r><w:t>403 / CAT403 标题
+<w:tcPr><w:tcW w:type="dxa" w:w="4986"/><w:tcMar><w:top w:w="100" w:type="dxa"/><w:start w:w="110" w:type="dxa"/><w:bottom w:w="100" w:type="dxa"/><w:end w:w="110" w:type="dxa"/></w:tcMar></w:tcPr><w:p><w:r><w:t>Alertrix Dashboard
+<w:tc><w:tcPr><w:tcW w:type="dxa" w:w="4986"/><w:tcMar><w:top w:w="100" w:type="dxa"/><w:start w:w="110" w:type="dxa"/><w:bottom w:w="100" w:type="dxa"/><w:end w:w="110" w:type="dxa"/></w:tcMar></w:tcPr><w:p><w:r><w:t>Alert Dashboard
+<w:tcPr><w:tcW w:type="dxa" w:w="4986"/><w:tcMar><w:top w:w="100" w:type="dxa"/><w:start w:w="110" w:type="dxa"/><w:bottom w:w="100" w:type="dxa"/><w:end w:w="110" w:type="dxa"/></w:tcMar></w:tcPr><w:p><w:r><w:t>Alert Center
+<w:tc><w:tcPr><w:tcW w:type="dxa" w:w="4986"/><w:tcMar><w:top w:w="100" w:type="dxa"/><w:start w:w="110" w:type="dxa"/><w:bottom w:w="100" w:type="dxa"/><w:end w:w="110" w:type="dxa"/></w:tcMar></w:tcPr><w:p><w:r><w:t>课程编号、作业编号
+<w:tcPr><w:tcW w:type="dxa" w:w="4986"/><w:tcMar><w:top w:w="100" w:type="dxa"/><w:start w:w="110" w:type="dxa"/><w:bottom w:w="100" w:type="dxa"/><w:end w:w="110" w:type="dxa"/></w:tcMar></w:tcPr><w:p><w:r><w:t>不在界面主标题中显示
+9. 实施优先级
+<w:tblPr><w:tblStyle w:val="TableGrid"/><w:tblW w:type="auto" w:w="0"/><w:jc w:val="center"/><w:tblLook w:firstColumn="1" w:firstRow="1" w:lastColumn="0" w:lastRow="0" w:noHBand="0" w:noVBand="1" w:val="04A0"/></w:tblPr><w:tblGrid><w:gridCol w:w="3324"/><w:gridCol w:w="3324"/><w:gridCol w:w="3324"/></w:tblGrid><w:tr><w:tc><w:tcPr><w:tcW w:type="dxa" w:w="3324"/><w:shd w:fill="D7EEF2"/><w:tcMar><w:top w:w="110" w:type="dxa"/><w:start w:w="110" w:type="dxa"/><w:bottom w:w="110" w:type="dxa"/><w:end w:w="110" w:type="dxa"/></w:tcMar></w:tcPr><w:p><w:r><w:t>优先级
+<w:tcPr><w:tcW w:type="dxa" w:w="3324"/><w:shd w:fill="D7EEF2"/><w:tcMar><w:top w:w="110" w:type="dxa"/><w:start w:w="110" w:type="dxa"/><w:bottom w:w="110" w:type="dxa"/><w:end w:w="110" w:type="dxa"/></w:tcMar></w:tcPr><w:p><w:r><w:t>任务
+<w:tcPr><w:tcW w:type="dxa" w:w="3324"/><w:shd w:fill="D7EEF2"/><w:tcMar><w:top w:w="110" w:type="dxa"/><w:start w:w="110" w:type="dxa"/><w:bottom w:w="110" w:type="dxa"/><w:end w:w="110" w:type="dxa"/></w:tcMar></w:tcPr><w:p><w:r><w:t>目标
+<w:tc><w:tcPr><w:tcW w:type="dxa" w:w="3324"/><w:tcMar><w:top w:w="100" w:type="dxa"/><w:start w:w="110" w:type="dxa"/><w:bottom w:w="100" w:type="dxa"/><w:end w:w="110" w:type="dxa"/></w:tcMar></w:tcPr><w:p><w:r><w:t>P1
+<w:tcPr><w:tcW w:type="dxa" w:w="3324"/><w:tcMar><w:top w:w="100" w:type="dxa"/><w:start w:w="110" w:type="dxa"/><w:bottom w:w="100" w:type="dxa"/><w:end w:w="110" w:type="dxa"/></w:tcMar></w:tcPr><w:p><w:r><w:t>去掉所有 403 / CAT403 命名；缩短设备卡；补充阈值、更新时间、在线状态；重做 Quick Actions
+<w:tcPr><w:tcW w:type="dxa" w:w="3324"/><w:tcMar><w:top w:w="100" w:type="dxa"/><w:start w:w="110" w:type="dxa"/><w:bottom w:w="100" w:type="dxa"/><w:end w:w="110" w:type="dxa"/></w:tcMar></w:tcPr><w:p><w:r><w:t>先把首页做得像正式系统
+<w:tc><w:tcPr><w:tcW w:type="dxa" w:w="3324"/><w:tcMar><w:top w:w="100" w:type="dxa"/><w:start w:w="110" w:type="dxa"/><w:bottom w:w="100" w:type="dxa"/><w:end w:w="110" w:type="dxa"/></w:tcMar></w:tcPr><w:p><w:r><w:t>P2
+<w:tcPr><w:tcW w:type="dxa" w:w="3324"/><w:tcMar><w:top w:w="100" w:type="dxa"/><w:start w:w="110" w:type="dxa"/><w:bottom w:w="100" w:type="dxa"/><w:end w:w="110" w:type="dxa"/></w:tcMar></w:tcPr><w:p><w:r><w:t>重构 Sensor Trends 页；给 Alert Center 增加 summary cards 和表头
+<w:tcPr><w:tcW w:type="dxa" w:w="3324"/><w:tcMar><w:top w:w="100" w:type="dxa"/><w:start w:w="110" w:type="dxa"/><w:bottom w:w="100" w:type="dxa"/><w:end w:w="110" w:type="dxa"/></w:tcMar></w:tcPr><w:p><w:r><w:t>提升页面完整度和答辩观感
+<w:tc><w:tcPr><w:tcW w:type="dxa" w:w="3324"/><w:tcMar><w:top w:w="100" w:type="dxa"/><w:start w:w="110" w:type="dxa"/><w:bottom w:w="100" w:type="dxa"/><w:end w:w="110" w:type="dxa"/></w:tcMar></w:tcPr><w:p><w:r><w:t>P3
+<w:tcPr><w:tcW w:type="dxa" w:w="3324"/><w:tcMar><w:top w:w="100" w:type="dxa"/><w:start w:w="110" w:type="dxa"/><w:bottom w:w="100" w:type="dxa"/><w:end w:w="110" w:type="dxa"/></w:tcMar></w:tcPr><w:p><w:r><w:t>扩充 Settings 页；补通知、阈值、站点配置
+<w:tcPr><w:tcW w:type="dxa" w:w="3324"/><w:tcMar><w:top w:w="100" w:type="dxa"/><w:start w:w="110" w:type="dxa"/><w:bottom w:w="100" w:type="dxa"/><w:end w:w="110" w:type="dxa"/></w:tcMar></w:tcPr><w:p><w:r><w:t>让设置页真正站得住
+<w:tc><w:tcPr><w:tcW w:type="dxa" w:w="3324"/><w:tcMar><w:top w:w="100" w:type="dxa"/><w:start w:w="110" w:type="dxa"/><w:bottom w:w="100" w:type="dxa"/><w:end w:w="110" w:type="dxa"/></w:tcMar></w:tcPr><w:p><w:r><w:t>P4
+<w:tcPr><w:tcW w:type="dxa" w:w="3324"/><w:tcMar><w:top w:w="100" w:type="dxa"/><w:start w:w="110" w:type="dxa"/><w:bottom w:w="100" w:type="dxa"/><w:end w:w="110" w:type="dxa"/></w:tcMar></w:tcPr><w:p><w:r><w:t>统一按钮、badge、间距、图表标签、空状态文案
+<w:tcPr><w:tcW w:type="dxa" w:w="3324"/><w:tcMar><w:top w:w="100" w:type="dxa"/><w:start w:w="110" w:type="dxa"/><w:bottom w:w="100" w:type="dxa"/><w:end w:w="110" w:type="dxa"/></w:tcMar></w:tcPr><w:p><w:r><w:t>形成整体视觉一致性
+10. 最终目标效果
+- 首页进入后先看到系统状态和关键指标，再看到设备概况、趋势预览和最近事件。
+- Sensor Trends 页不再是空白趋势框，而是可分析、可筛选、可解释的历史趋势页。
+- Alert Center 页具备监控中心的结构感，至少包含统计、筛选、列表、动作入口。
+- Settings 页具备系统配置中心的完整性，而不是简单资料页。
+- 整个界面统一去除课程项目编号痕迹，更接近正式产品展示效果。
+<w:tblPr><w:tblW w:type="auto" w:w="0"/><w:jc w:val="center"/><w:tblLook w:firstColumn="1" w:firstRow="1" w:lastColumn="0" w:lastRow="0" w:noHBand="0" w:noVBand="1" w:val="04A0"/></w:tblPr><w:tblGrid><w:gridCol w:w="9972"/></w:tblGrid><w:tr><w:tc><w:tcPr><w:tcW w:type="dxa" w:w="9972"/><w:shd w:fill="F2F6F7"/><w:tcMar><w:top w:w="130" w:type="dxa"/><w:start w:w="140" w:type="dxa"/><w:bottom w:w="130" w:type="dxa"/><w:end w:w="140" w:type="dxa"/></w:tcMar></w:tcPr><w:p><w:r><w:rPr><w:rFonts w:ascii="Arial" w:hAnsi="Arial" w:eastAsia="Microsoft YaHei"/><w:i/></w:rPr><w:t>建议下一步：按本清单先完成 P1 与 P2，再进入统一视觉打磨。这样最能快速提升答辩展示效果。

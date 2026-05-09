@@ -1,0 +1,6 @@
+2026/04/12-14:05:33.840 5624 Creating DB F:\403\demo\.chrome_fcm_profile_diag3\Default\IndexedDB\http_localhost_18132.indexeddb.leveldb since it was missing.
+2026/04/12-14:05:33.850 5624 Reusing MANIFEST F:\403\demo\.chrome_fcm_profile_diag3\Default\IndexedDB\http_localhost_18132.indexeddb.leveldb/MANIFEST-000001
+2026/04/12-14:05:33.866 1674 Level-0 table #5: started
+2026/04/12-14:05:33.875 1674 Level-0 table #5: 656 bytes OK
+2026/04/12-14:05:33.879 1674 Delete type=0 #3
+2026/04/12-14:05:33.879 5624 Manual compaction at level-0 from '\x00\x01\x00\x00\x00' @ 72057594037927935 : 1 .. '\x00\x02\x00\x00\x00' @ 0 : 0; will stop at (end)

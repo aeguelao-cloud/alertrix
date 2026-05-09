@@ -1,0 +1,6 @@
+﻿{
+  "resource": "/api/sensors/ingest",
+  "path": "/api/sensors/ingest",
+  "httpMethod": "POST",
+  "body": "{\"sensorType\":\"waterLevel\",\"value\":90,\"zone\":\"Zone A - Pump Station\"}"
+}

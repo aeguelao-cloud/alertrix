@@ -1,0 +1,51 @@
+{
+   "checksum": "d977a2d69bde0063d9a6e53aed59a453",
+   "roots": {
+      "bookmark_bar": {
+         "children": [  ],
+         "date_added": "13422773065660191",
+         "date_last_used": "0",
+         "date_modified": "0",
+         "guid": "0bc5d13f-2cba-5d74-951f-3f233fe6c908",
+         "id": "1",
+         "name": "收藏夹栏",
+         "source": "unknown",
+         "type": "folder"
+      },
+      "other": {
+         "children": [  ],
+         "date_added": "13422773065660191",
+         "date_last_used": "0",
+         "date_modified": "0",
+         "guid": "82b081ec-3dd3-529c-8475-ab6c344590dd",
+         "id": "2",
+         "name": "其他收藏夹",
+         "source": "unknown",
+         "type": "folder"
+      },
+      "synced": {
+         "children": [  ],
+         "date_added": "13422773065660191",
+         "date_last_used": "0",
+         "date_modified": "0",
+         "guid": "4cf2e351-0e85-532b-bb37-df045d8f8d0f",
+         "id": "3",
+         "name": "移动收藏夹",
+         "source": "unknown",
+         "type": "folder"
+      },
+      "workspaces_v2": {
+         "children": [  ],
+         "date_added": "13422773065660191",
+         "date_last_used": "0",
+         "date_modified": "0",
+         "guid": "75aa6670-344f-549d-b742-660f029506ab",
+         "id": "5",
+         "name": "工作区",
+         "source": "unknown",
+         "type": "folder"
+      }
+   },
+   "sync_metadata": "CkEKHgiIgQISCC6Y5wqeAQAAKg4QABgBIAAoBjAAOABAABIAKhhoaXRiYlN3RFNjRXNadU1pT3BvRnpnPT1IA6AGDBKOAQgFEokBChx3UkJyWkwrNlBBOWF2S2dqTlA3SlhETGNmdnM9EiQzYmY2NjFmZi1iZTMzLTVlY2MtYTZkYi0xYTdmOTk5NWMwNWQYACAAKAAwpMKHuuAzONLMh7rgM0DSzIe64DNKHG5teDY1c1FEdnhJOFRnRWV2K0ErbnR0b1NuND1aAGUAAAAAwj4CYAASjgEIAhKJAQocWWNTVG9udkVTUHdxQ3M0TDJjclZodjY4TDk4PRIkZDhmNjdlMjAtNDIwNC01MWNkLTgwMTMtNDI4ZDBhYTM0M2UzGAAgACgAMJ/Ch7rgMzj+y4e64DNA/suHuuAzShxvUFZraHdCUmJWNjVLQ1dSMitJT05IV29PdTg9WgBlAAAAAMI+AmAAEo4BCAESiQEKHHl4Si82ZnZrZWNyN2twNUVRekI0dFdMcGRiRT0SJDNiOTRhOThmLWY2ZDUtNTQ5Ny05ZGRjLTg0MTQ3ZGMzYTYzZhgAIAAoADCewoe64DM4zMuHuuAzQMzLh7rgM0ocYVJDV0xnaEY5YjVJbnFLSUR2dUovanZRa0ZjPVoAZQAAAADCPgJgABKOAQgDEokBChxuamdEdTg4ZUNydlhwODZwRDdmSEdjcUZwODg9EiRlZDY3Mjk3OC1kNDk5LTU0MGYtYjE5MS03YzNkMzA0NjkzMDkYACAAKAAwpcKHuuAzOPjMh7rgM0D4zIe64DNKHHl6TkIwMWNuNTRBN2NSVTB1VCsvUGdtVHRVbz1aAGUAAAAAwj4CYAAwADgA",
+   "version": 1
+}
