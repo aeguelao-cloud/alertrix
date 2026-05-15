@@ -54,7 +54,7 @@ class _AlertsPageState extends State<AlertsPage> {
       padding: uiPagePadding(context),
       children: [
         const UiPageHeader(
-          systemName: 'Alertix',
+          systemName: 'Alertrix',
           title: 'Incident Queue',
           subtitle:
               'Review incidents, acknowledge visible items, and escalate when needed.',
@@ -242,7 +242,7 @@ class _AlertsPageState extends State<AlertsPage> {
                           .toList(growable: false),
                     )
                   : UiResponsiveTable(
-                      minWidth: 980,
+                      minWidth: 1560,
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
@@ -250,7 +250,7 @@ class _AlertsPageState extends State<AlertsPage> {
                             children: [
                               Expanded(
                                 flex: 2,
-                                child: Text('Triggered At',
+                                child: Text('Last Updated',
                                     style: UiText.cardTitle),
                               ),
                               Expanded(
@@ -259,13 +259,24 @@ class _AlertsPageState extends State<AlertsPage> {
                                     style: UiText.cardTitle),
                               ),
                               Expanded(
+                                flex: 2,
+                                child:
+                                    Text('Sensor ID', style: UiText.cardTitle),
+                              ),
+                              Expanded(
                                 flex: 3,
                                 child:
                                     Text('Alert Type', style: UiText.cardTitle),
                               ),
                               Expanded(
-                                flex: 1,
-                                child: Text('Count', style: UiText.cardTitle),
+                                flex: 3,
+                                child: Text('Trigger Value',
+                                    style: UiText.cardTitle),
+                              ),
+                              Expanded(
+                                flex: 2,
+                                child: Text('First Seen / Last Seen',
+                                    style: UiText.cardTitle),
                               ),
                               Expanded(
                                 flex: 2,
@@ -278,6 +289,11 @@ class _AlertsPageState extends State<AlertsPage> {
                               ),
                               Expanded(
                                 flex: 2,
+                                child: Text('Acknowledged By',
+                                    style: UiText.cardTitle),
+                              ),
+                              Expanded(
+                                flex: 3,
                                 child: Text('Action', style: UiText.cardTitle),
                               ),
                             ],
@@ -299,6 +315,13 @@ class _AlertsPageState extends State<AlertsPage> {
                                       style: UiText.body),
                                 ),
                                 Expanded(
+                                  flex: 2,
+                                  child: Text(
+                                    _sensorIdForAlert(item.source),
+                                    style: UiText.body,
+                                  ),
+                                ),
+                                Expanded(
                                   flex: 3,
                                   child: Text(
                                     _titleCaseAlert(item.source.title),
@@ -306,12 +329,17 @@ class _AlertsPageState extends State<AlertsPage> {
                                   ),
                                 ),
                                 Expanded(
-                                  flex: 1,
+                                  flex: 3,
                                   child: Text(
-                                    _incidentMode
-                                        ? 'x${item.occurrences}'
-                                        : '--',
+                                    _triggerValueSummary(item),
                                     style: UiText.body,
+                                  ),
+                                ),
+                                Expanded(
+                                  flex: 2,
+                                  child: Text(
+                                    '${_formatDateTime(item.firstTimestamp)}\n${_formatDateTime(item.latestTimestamp)}',
+                                    style: UiText.helper,
                                   ),
                                 ),
                                 Expanded(
@@ -335,7 +363,7 @@ class _AlertsPageState extends State<AlertsPage> {
                                   child: Align(
                                     alignment: Alignment.centerLeft,
                                     child: UiBadge(
-                                      label: 'Active',
+                                      label: 'Unacknowledged',
                                       tone: UiBadgeTone.warning,
                                     ),
                                   ),
@@ -344,13 +372,35 @@ class _AlertsPageState extends State<AlertsPage> {
                                   flex: 2,
                                   child: Align(
                                     alignment: Alignment.centerLeft,
-                                    child: TextButton(
-                                      onPressed: () =>
-                                          widget.onOpenAlertDetail(item.source),
-                                      style: uiLinkButton(),
-                                      child: Text(_incidentMode
-                                          ? 'Open incident'
-                                          : 'Open detail'),
+                                    child: Text(
+                                      '--',
+                                      style: UiText.helper,
+                                    ),
+                                  ),
+                                ),
+                                Expanded(
+                                  flex: 3,
+                                  child: Align(
+                                    alignment: Alignment.centerLeft,
+                                    child: Wrap(
+                                      spacing: 2,
+                                      children: [
+                                        TextButton(
+                                          onPressed: () => widget
+                                              .onOpenAlertDetail(item.source),
+                                          style: uiLinkButton(),
+                                          child: const Text('Open Incident'),
+                                        ),
+                                        TextButton(
+                                          onPressed: _ackProcessing
+                                              ? null
+                                              : () => _acknowledgeVisible(
+                                                    [item.source],
+                                                  ),
+                                          style: uiLinkButton(),
+                                          child: const Text('Acknowledge'),
+                                        ),
+                                      ],
                                     ),
                                   ),
                                 ),
@@ -395,19 +445,25 @@ class _AlertsPageState extends State<AlertsPage> {
           const SizedBox(height: 2),
           Text(_formatDateTime(item.latestTimestamp), style: UiText.helper),
           const SizedBox(height: 8),
-          Row(
+          Text(
+            'First Seen: ${_formatDateTime(item.firstTimestamp)}\nLast Seen: ${_formatDateTime(item.latestTimestamp)}',
+            style: UiText.helper,
+          ),
+          const SizedBox(height: 6),
+          Wrap(
+            spacing: 6,
             children: [
-              Text(
-                _incidentMode
-                    ? 'Count: x${item.occurrences}'
-                    : 'Status: Active',
-                style: UiText.helper,
-              ),
-              const Spacer(),
               TextButton(
                 onPressed: () => widget.onOpenAlertDetail(item.source),
                 style: uiLinkButton(),
-                child: Text(_incidentMode ? 'Open incident' : 'Open detail'),
+                child: const Text('Open Incident'),
+              ),
+              TextButton(
+                onPressed: _ackProcessing
+                    ? null
+                    : () => _acknowledgeVisible([item.source]),
+                style: uiLinkButton(),
+                child: const Text('Acknowledge'),
               ),
             ],
           ),
@@ -457,10 +513,13 @@ class _AlertsPageState extends State<AlertsPage> {
 
     final incidents = buckets.values.map((group) {
       group.sort((a, b) => b.timestamp.compareTo(a.timestamp));
+      final first = group.last.timestamp;
+      final latest = group.first.timestamp;
       return _DisplayAlert.fromIncident(
         source: group.first,
         occurrences: group.length,
-        latestTimestamp: group.first.timestamp,
+        firstTimestamp: first,
+        latestTimestamp: latest,
       );
     }).toList(growable: false);
 
@@ -478,6 +537,44 @@ class _AlertsPageState extends State<AlertsPage> {
     if (lower.contains('vibration')) return 'vibration';
     if (lower.contains('temp')) return 'temperature';
     return 'misc';
+  }
+
+  static String _sensorIdForAlert(AlertEvent alert) {
+    final lower = alert.title.toLowerCase();
+    if (lower.contains('water')) return 'WL-01';
+    if (lower.contains('vibration')) return 'VB-01';
+    if (lower.contains('temp')) return 'TP-01';
+    return 'SN-01';
+  }
+
+  static String _triggerValueSummary(_DisplayAlert item) {
+    final trigger = item.source.triggerValue?.trim();
+    final duration = item.latestTimestamp
+        .difference(item.firstTimestamp)
+        .inMinutes
+        .clamp(0, 9999);
+    final threshold =
+        _thresholdByAlertTitle(item.source.title, item.source.severity);
+    if (trigger == null || trigger.isEmpty) {
+      return 'Threshold: $threshold | Duration: ${duration} min';
+    }
+    return '$trigger | Threshold: $threshold | Duration: ${duration} min';
+  }
+
+  static String _thresholdByAlertTitle(String title, SensorLevel severity) {
+    final lower = title.toLowerCase();
+    final isCritical = severity == SensorLevel.critical;
+    final label = isCritical ? 'Critical' : 'Warning';
+    if (lower.contains('water')) {
+      return '$label ${isCritical ? '85%' : '70%'}';
+    }
+    if (lower.contains('vibration')) {
+      return '$label ${isCritical ? '4.0' : '2.8'} mm/s';
+    }
+    if (lower.contains('temp')) {
+      return '$label ${isCritical ? '40' : '35'}°C';
+    }
+    return label;
   }
 
   static String _titleCaseAlert(String raw) {
@@ -552,8 +649,8 @@ class _TopStatGrid extends StatelessWidget {
                                 children: [
                                   Text(
                                     item.value,
-                                    style: UiText.bigNumber
-                                        .copyWith(fontSize: 30),
+                                    style:
+                                        UiText.bigNumber.copyWith(fontSize: 30),
                                   ),
                                   _MutedStatBadge(
                                     label: item.label,
@@ -565,8 +662,8 @@ class _TopStatGrid extends StatelessWidget {
                                 children: [
                                   Text(
                                     item.value,
-                                    style: UiText.bigNumber
-                                        .copyWith(fontSize: 34),
+                                    style:
+                                        UiText.bigNumber.copyWith(fontSize: 34),
                                   ),
                                   const SizedBox(width: 8),
                                   _MutedStatBadge(
@@ -639,11 +736,13 @@ class _DisplayAlert {
   const _DisplayAlert({
     required this.source,
     required this.occurrences,
+    required this.firstTimestamp,
     required this.latestTimestamp,
   });
 
   final AlertEvent source;
   final int occurrences;
+  final DateTime firstTimestamp;
   final DateTime latestTimestamp;
 
   SensorLevel get severity => source.severity;
@@ -652,6 +751,7 @@ class _DisplayAlert {
     return _DisplayAlert(
       source: event,
       occurrences: 1,
+      firstTimestamp: event.timestamp,
       latestTimestamp: event.timestamp,
     );
   }
@@ -659,11 +759,13 @@ class _DisplayAlert {
   factory _DisplayAlert.fromIncident({
     required AlertEvent source,
     required int occurrences,
+    required DateTime firstTimestamp,
     required DateTime latestTimestamp,
   }) {
     return _DisplayAlert(
       source: source,
       occurrences: occurrences,
+      firstTimestamp: firstTimestamp,
       latestTimestamp: latestTimestamp,
     );
   }

@@ -1,7 +1,7 @@
-﻿import 'package:flutter/material.dart';
+import 'package:flutter/material.dart';
 
 enum SensorType {
-  waterLevel('Water Level', 'Tank Capacity', Icons.water_drop_outlined),
+  waterLevel('Water Level', '%', Icons.water_drop_outlined),
   vibration('Vibration', 'mm/s RMS', Icons.vibration_outlined),
   temperature('Temperature', '°C', Icons.thermostat_outlined);
 

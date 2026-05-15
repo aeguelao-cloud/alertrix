@@ -16,6 +16,8 @@ class TrendSparkline extends StatefulWidget {
     this.showPoints = true,
     this.timeLabelBuilder,
     this.valueLabelBuilder,
+    this.minY,
+    this.maxY,
   });
 
   final List<double> values;
@@ -29,6 +31,8 @@ class TrendSparkline extends StatefulWidget {
   final bool showPoints;
   final String Function(DateTime value)? timeLabelBuilder;
   final String Function(double value)? valueLabelBuilder;
+  final double? minY;
+  final double? maxY;
 
   @override
   State<TrendSparkline> createState() => _TrendSparklineState();
@@ -57,6 +61,8 @@ class _TrendSparklineState extends State<TrendSparkline> {
           timestamps: timestamps,
           warningThreshold: widget.warningThreshold,
           criticalThreshold: widget.criticalThreshold,
+          minY: widget.minY,
+          maxY: widget.maxY,
         );
         final xTicks = widget.xTicks ?? _defaultTicks(timestamps);
         final index = _hoverIndex;
@@ -103,9 +109,8 @@ class _TrendSparklineState extends State<TrendSparkline> {
                     left: _tooltipLeft(size.width, point.dx),
                     top: _tooltipTop(point.dy),
                     child: _TrendTooltip(
-                      timeLabel: _formatTime(timestamps[activeIndex!]),
-                      metricLine:
-                          '${widget.metricLabel}: ${_formatValue(widget.values[activeIndex])}',
+                      primaryLine:
+                          '${_formatTime(timestamps[activeIndex!])} | ${widget.metricLabel}: ${_formatValue(widget.values[activeIndex])}',
                       status: _statusFor(widget.values[activeIndex]),
                     ),
                   ),
@@ -251,7 +256,7 @@ class _SparklinePainter extends CustomPainter {
     if (warningThreshold != null) {
       final y = geometry.yForValue(warningThreshold!);
       final warningPaint = Paint()
-        ..color = const Color(0xFFE09D25).withValues(alpha: 0.82)
+        ..color = const Color(0xFFE09D25).withOpacity(0.82)
         ..strokeWidth = 1.2;
       canvas.drawLine(
           Offset(plotRect.left, y), Offset(plotRect.right, y), warningPaint);
@@ -259,7 +264,7 @@ class _SparklinePainter extends CustomPainter {
     if (criticalThreshold != null) {
       final y = geometry.yForValue(criticalThreshold!);
       final criticalPaint = Paint()
-        ..color = const Color(0xFFC93C3C).withValues(alpha: 0.82)
+        ..color = const Color(0xFFC93C3C).withOpacity(0.82)
         ..strokeWidth = 1.2;
       canvas.drawLine(
           Offset(plotRect.left, y), Offset(plotRect.right, y), criticalPaint);
@@ -300,7 +305,7 @@ class _SparklinePainter extends CustomPainter {
       ..shader = LinearGradient(
         begin: Alignment.topCenter,
         end: Alignment.bottomCenter,
-        colors: [color.withValues(alpha: 0.22), color.withValues(alpha: 0.02)],
+        colors: [color.withOpacity(0.22), color.withOpacity(0.02)],
       ).createShader(plotRect);
 
     final linePaint = Paint()
@@ -443,13 +448,11 @@ class _SparklinePainter extends CustomPainter {
 
 class _TrendTooltip extends StatelessWidget {
   const _TrendTooltip({
-    required this.timeLabel,
-    required this.metricLine,
+    required this.primaryLine,
     required this.status,
   });
 
-  final String timeLabel;
-  final String metricLine;
+  final String primaryLine;
   final String status;
 
   @override
@@ -480,9 +483,7 @@ class _TrendTooltip extends StatelessWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text('Time: $timeLabel'),
-              const SizedBox(height: 2),
-              Text(metricLine),
+              Text(primaryLine),
               const SizedBox(height: 2),
               Text('Status: $status'),
             ],
@@ -518,6 +519,8 @@ class _TrendGeometry {
     required List<DateTime> timestamps,
     required double? warningThreshold,
     required double? criticalThreshold,
+    required double? minY,
+    required double? maxY,
   }) {
     const leftPad = 56.0;
     const topPad = 10.0;
@@ -539,6 +542,12 @@ class _TrendGeometry {
     if (criticalThreshold != null) {
       minVal = math.min(minVal, criticalThreshold);
       maxVal = math.max(maxVal, criticalThreshold);
+    }
+    if (minY != null) {
+      minVal = minY;
+    }
+    if (maxY != null) {
+      maxVal = maxY;
     }
     var spread = maxVal - minVal;
     if (spread.abs() < 0.001) {

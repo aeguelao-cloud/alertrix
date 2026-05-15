@@ -12,6 +12,8 @@
 const uint8_t DHT_PIN = 4;
 const uint8_t WATER_SENSOR_AO_PIN = 11;  // connect to AO of red water sensor
 const uint8_t BUZZER_PIN = 14;
+const uint8_t ULTRASONIC_TRIG_PIN = 5;
+const uint8_t ULTRASONIC_ECHO_PIN = 6;
 
 #define DHTTYPE DHT11
 DHT dht(DHT_PIN, DHTTYPE);
@@ -50,9 +52,9 @@ const char* AWS_ROOT_CA = MQTT_ROOT_CA;
 const char* AWS_IOT_DEVICE_CERT = MQTT_DEVICE_CERT;
 const char* AWS_IOT_PRIVATE_KEY = MQTT_DEVICE_PRIVATE_KEY;
 
-// If you do not have vibration hardware yet, keep fallback on to keep UI populated.
-const bool SEND_VIBRATION_FALLBACK = true;
-const float VIBRATION_FALLBACK_VALUE = 0.0f;
+// Use ultrasonic sensor (Trig/Echo) as vibration channel value for now.
+const bool SEND_VIBRATION_FROM_ULTRASONIC = true;
+const float ULTRASONIC_INVALID_VALUE = -1.0f;
 
 // Calibrate these two values using your own sensor:
 // 1) dryValue: sensor out of water
@@ -69,6 +71,7 @@ float lastTempC = NAN;
 float lastHum = NAN;
 uint8_t waterAdcFaultCount = 0;
 unsigned long lastWifiRetryMs = 0;
+unsigned long wifiConnectStartMs = 0;
 unsigned long lastWaterPostMs = 0;
 unsigned long lastTempPostMs = 0;
 unsigned long lastVibrationPostMs = 0;
@@ -96,8 +99,8 @@ bool isValidDhtReading(float tempC, float hum) {
 #if defined(ARDUINO_ARCH_ESP32)
 bool hasWifiConfig() {
   return strlen(WIFI_SSID) > 0 && strlen(WIFI_PASSWORD) > 0 &&
-         strcmp(WIFI_SSID, "YOUR_WIFI_SSID") != 0 &&
-         strcmp(WIFI_PASSWORD, "YOUR_WIFI_PASSWORD") != 0;
+         strcmp(WIFI_SSID, "cslab") != 0 &&
+         strcmp(WIFI_PASSWORD, "aksesg31") != 0;
 }
 
 bool hasHttpConfig() {
@@ -120,31 +123,45 @@ bool hasMqttConfig() {
 }
 
 bool ensureWiFiConnected() {
-  if (WiFi.status() == WL_CONNECTED) return true;
+  wl_status_t status = WiFi.status();
+  if (status == WL_CONNECTED) return true;
 
   const unsigned long now = millis();
-  if (now - lastWifiRetryMs < 2000) return false;
+
+  // If a connection attempt is already in progress, wait for it to complete
+  // instead of calling WiFi.begin() repeatedly.
+  if (status == WL_IDLE_STATUS) {
+    if (wifiConnectStartMs > 0 && (now - wifiConnectStartMs) > 10000) {
+      Serial.println("WiFi connect timeout, retrying...");
+      WiFi.disconnect(true, true);
+      wifiConnectStartMs = 0;
+      lastWifiRetryMs = now;
+    }
+    return false;
+  }
+
+  if (now - lastWifiRetryMs < 3000) return false;
   lastWifiRetryMs = now;
 
   Serial.print("WiFi connecting to ");
   Serial.println(WIFI_SSID);
   WiFi.mode(WIFI_STA);
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+  wifiConnectStartMs = now;
 
+  // Give a short non-blocking window for quick success on good networks.
   unsigned long start = millis();
-  while (WiFi.status() != WL_CONNECTED && (millis() - start) < 6000) {
-    delay(200);
-    Serial.print(".");
+  while (WiFi.status() != WL_CONNECTED && (millis() - start) < 1200) {
+    delay(100);
   }
-  Serial.println();
 
   if (WiFi.status() == WL_CONNECTED) {
+    wifiConnectStartMs = 0;
     Serial.print("WiFi connected. IP=");
     Serial.println(WiFi.localIP());
     return true;
   }
 
-  Serial.println("WiFi connect timeout, retrying...");
   return false;
 }
 
@@ -314,6 +331,18 @@ float adcToWaterLevelPercent(int adcValue) {
   return percent;
 }
 
+float readUltrasonicDistanceCm() {
+  digitalWrite(ULTRASONIC_TRIG_PIN, LOW);
+  delayMicroseconds(2);
+  digitalWrite(ULTRASONIC_TRIG_PIN, HIGH);
+  delayMicroseconds(10);
+  digitalWrite(ULTRASONIC_TRIG_PIN, LOW);
+
+  const unsigned long durationUs = pulseIn(ULTRASONIC_ECHO_PIN, HIGH, 30000UL);
+  if (durationUs == 0) return ULTRASONIC_INVALID_VALUE;
+  return (float)durationUs * 0.0343f / 2.0f;
+}
+
 void setup() {
   Serial.begin(115200);
   dht.begin();
@@ -321,6 +350,8 @@ void setup() {
 
   pinMode(WATER_SENSOR_AO_PIN, INPUT);
   pinMode(BUZZER_PIN, OUTPUT);
+  pinMode(ULTRASONIC_TRIG_PIN, OUTPUT);
+  pinMode(ULTRASONIC_ECHO_PIN, INPUT);
   digitalWrite(BUZZER_PIN, LOW);
 
 #if defined(ARDUINO_ARCH_ESP32)
@@ -380,6 +411,7 @@ void loop() {
   float hum = lastHum;
   int waterAdc = readWaterAdc();
   float waterLevelPercent = adcToWaterLevelPercent(waterAdc);
+  float ultrasonicDistanceCm = readUltrasonicDistanceCm();
   const bool waterAdcOutOfRange = (waterAdc < ADC_FAULT_LOW || waterAdc > ADC_FAULT_HIGH);
   if (waterAdcOutOfRange) {
     if (waterAdcFaultCount < 255) waterAdcFaultCount++;
@@ -411,6 +443,8 @@ void loop() {
   Serial.print(waterAdc);
   Serial.print(",WL=");
   if (waterLevelPercent < 0) Serial.print("nan"); else Serial.print(waterLevelPercent, 2);
+  Serial.print(",US_CM=");
+  if (ultrasonicDistanceCm < 0) Serial.print("nan"); else Serial.print(ultrasonicDistanceCm, 1);
   Serial.print(",ALARM=");
   Serial.print(alarm ? "ON" : "OFF");
   Serial.print(",ADC_FAULT=");
@@ -445,8 +479,10 @@ void loop() {
       }
     }
 
-    if (SEND_VIBRATION_FALLBACK && (now - lastVibrationPostMs >= VIBRATION_POST_INTERVAL_MS)) {
-      if (sendReadingToCloud("vibration", VIBRATION_FALLBACK_VALUE)) {
+    if (SEND_VIBRATION_FROM_ULTRASONIC &&
+        ultrasonicDistanceCm >= 0 &&
+        (now - lastVibrationPostMs >= VIBRATION_POST_INTERVAL_MS)) {
+      if (sendReadingToCloud("vibration", ultrasonicDistanceCm)) {
         lastVibrationPostMs = now;
       }
     }

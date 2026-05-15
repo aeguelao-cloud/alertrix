@@ -1,4 +1,4 @@
-﻿import '../models/auth_models.dart';
+import '../models/auth_models.dart';
 import '../models/monitoring_models.dart';
 
 abstract class MonitoringApi {

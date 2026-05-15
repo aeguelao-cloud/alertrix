@@ -41,7 +41,7 @@ class _WorkOrdersPageState extends State<WorkOrdersPage> {
       padding: uiPagePadding(context),
       children: [
         const UiPageHeader(
-          systemName: 'Alertix',
+          systemName: 'Alertrix',
           title: 'Work Orders',
           subtitle: 'Track escalated incidents and field response status.',
         ),
@@ -63,7 +63,7 @@ class _WorkOrdersPageState extends State<WorkOrdersPage> {
                 ),
               );
               final statusFilter = DropdownButtonFormField<String>(
-                initialValue: _statusFilter,
+                value: _statusFilter,
                 items: const [
                   DropdownMenuItem(value: 'ALL', child: Text('All status')),
                   DropdownMenuItem(value: 'OPEN', child: Text('Open')),

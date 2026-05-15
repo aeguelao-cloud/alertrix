@@ -28,7 +28,6 @@ function parseInternalAdminIds() {
 function ensureAdminRequest(event) {
   const headers = event.headers || {};
   const role = String(headers["x-user-role"] || headers["X-User-Role"] || "").trim();
-  const actor = String(headers["x-user-id"] || headers["X-User-Id"] || "").trim().toLowerCase();
 
   if (!isAdminRole(role)) {
     return {
@@ -38,18 +37,27 @@ function ensureAdminRequest(event) {
     };
   }
 
+  const actor = String(headers["x-user-id"] || headers["X-User-Id"] || "").trim().toLowerCase();
+  return { ok: true, actor };
+}
+
+function ensureSuperAdminRequest(event) {
+  const gate = ensureAdminRequest(event);
+  if (!gate.ok) return gate;
+
   const internalAdminIds = parseInternalAdminIds();
-  if (!internalAdminIds.includes(actor)) {
+  if (!internalAdminIds.includes(gate.actor)) {
     return {
       ok: false,
-      response: forbidden("Internal admin account required"),
+      response: forbidden("Super admin access required"),
       actor: null,
     };
   }
 
-  return { ok: true, actor };
+  return gate;
 }
 
 module.exports = {
   ensureAdminRequest,
+  ensureSuperAdminRequest,
 };

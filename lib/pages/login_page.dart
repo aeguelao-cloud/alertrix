@@ -6,6 +6,7 @@ import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 
 import '../models/auth_models.dart';
+import 'forgot_password_page.dart';
 
 class LoginPage extends StatefulWidget {
   const LoginPage({
@@ -104,7 +105,7 @@ class _LoginPageState extends State<LoginPage> {
                     Text(
                       _registerMode
                           ? "Create your account with email verification.\nAdmin accounts are issued internally."
-                          : "Sign in to access Alertix.\nAdmin accounts are issued internally.",
+                          : "Sign in to access Alertrix.\nAdmin accounts are issued internally.",
                       style: TextStyle(
                         fontSize: compact ? 14 : 16,
                         color: _bodyColor,
@@ -174,10 +175,7 @@ class _LoginPageState extends State<LoginPage> {
                             onPressed: _busy
                                 ? null
                                 : () {
-                                    setState(() {
-                                      _registerMode = !_registerMode;
-                                      _errorText = null;
-                                    });
+                                    _switchAuthMode(!_registerMode);
                                   },
                             style: TextButton.styleFrom(
                               foregroundColor: _brandColor,
@@ -259,6 +257,7 @@ class _LoginPageState extends State<LoginPage> {
         controller: _passwordController,
         hintText: "Password",
         obscureText: _obscureRegisterPassword,
+        autofillHints: const <String>[],
         textInputAction: TextInputAction.next,
         onSubmitted: (_) => FocusScope.of(context).nextFocus(),
         suffixIcon: _buildPasswordToggle(
@@ -279,6 +278,7 @@ class _LoginPageState extends State<LoginPage> {
         controller: _confirmPasswordController,
         hintText: "Confirm password",
         obscureText: _obscureRegisterConfirmPassword,
+        autofillHints: const <String>[],
         textInputAction: TextInputAction.done,
         onSubmitted: (_) =>
             _registerMode ? _submitRegisterWithKeyboard() : null,
@@ -302,6 +302,9 @@ class _LoginPageState extends State<LoginPage> {
         hintText: "Email",
         keyboardType: TextInputType.emailAddress,
         textInputAction: TextInputAction.next,
+        onChanged: (_) {
+          if (_errorText != null) setState(() => _errorText = null);
+        },
         onSubmitted: (_) => FocusScope.of(context).nextFocus(),
       ),
       const SizedBox(height: 14),
@@ -310,6 +313,9 @@ class _LoginPageState extends State<LoginPage> {
         hintText: "Password",
         obscureText: _obscureLoginPassword,
         textInputAction: TextInputAction.done,
+        onChanged: (_) {
+          if (_errorText != null) setState(() => _errorText = null);
+        },
         onSubmitted: (_) => _submitLoginWithKeyboard(),
         suffixIcon: _buildPasswordToggle(
           obscured: _obscureLoginPassword,
@@ -347,9 +353,11 @@ class _LoginPageState extends State<LoginPage> {
     bool obscureText = false,
     TextInputType? keyboardType,
     List<TextInputFormatter>? inputFormatters,
+    Iterable<String>? autofillHints,
     Widget? suffixIcon,
     TextInputAction? textInputAction,
     ValueChanged<String>? onSubmitted,
+    ValueChanged<String>? onChanged,
   }) {
     return SizedBox(
       height: 52,
@@ -358,8 +366,10 @@ class _LoginPageState extends State<LoginPage> {
         obscureText: obscureText,
         keyboardType: keyboardType,
         inputFormatters: inputFormatters,
+        autofillHints: autofillHints,
         textInputAction: textInputAction,
         onSubmitted: onSubmitted,
+        onChanged: onChanged,
         style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w500),
         decoration: _inputDecoration(hintText, suffixIcon: suffixIcon),
       ),
@@ -415,6 +425,18 @@ class _LoginPageState extends State<LoginPage> {
     _register();
   }
 
+  void _switchAuthMode(bool registerMode) {
+    setState(() {
+      _registerMode = registerMode;
+      _errorText = null;
+      _passwordController.clear();
+      _confirmPasswordController.clear();
+      if (!registerMode) {
+        _codeController.clear();
+      }
+    });
+  }
+
   Widget _buildAuthSwitch() {
     return SizedBox(
       width: double.infinity,
@@ -449,10 +471,7 @@ class _LoginPageState extends State<LoginPage> {
           shape: const WidgetStatePropertyAll(StadiumBorder()),
         ),
         onSelectionChanged: (v) {
-          setState(() {
-            _registerMode = v.first;
-            _errorText = null;
-          });
+          _switchAuthMode(v.first);
         },
       ),
     );
@@ -650,193 +669,13 @@ class _LoginPageState extends State<LoginPage> {
   }
 
   Future<void> _forgotPassword() async {
-    final email = _loginController.text.trim().toLowerCase();
-    if (email.isEmpty) {
-      setState(() => _errorText = "Enter your email first.");
-      return;
-    }
-    if (!_hasApi) {
-      setState(
-        () => _errorText =
-            "Forgot password requires backend API. Please set API_BASE_URL.",
-      );
-      return;
-    }
-
-    await _runBusy(() async {
-      final sendResp = await http.post(
-        Uri.parse("${widget.apiBaseUrl}/api/auth/send-code"),
-        headers: {"Content-Type": "application/json"},
-        body: jsonEncode({
-          "name": "Password Reset",
-          "email": email,
-        }),
-      );
-      if (sendResp.statusCode < 200 || sendResp.statusCode >= 300) {
-        throw Exception(
-          _extractError(sendResp.body, fallback: "Failed to send reset code"),
-        );
-      }
-    });
-    if (!mounted || _errorText != null) return;
-
-    await _showResetPasswordDialog(email);
-  }
-
-  Future<void> _showResetPasswordDialog(String email) async {
-    final codeController = TextEditingController();
-    final newPasswordController = TextEditingController();
-    final confirmController = TextEditingController();
-    String? localError;
-    bool localBusy = false;
-
-    Future<void> reset(StateSetter setLocalState) async {
-      final code = codeController.text.trim();
-      final newPassword = newPasswordController.text;
-      final confirm = confirmController.text;
-      if (!RegExp(r"^\d{6}$").hasMatch(code)) {
-        setLocalState(() => localError = "Enter a valid 6-digit code.");
-        return;
-      }
-      if (newPassword.length < 8) {
-        setLocalState(
-            () => localError = "Password must be at least 8 characters.");
-        return;
-      }
-      if (newPassword != confirm) {
-        setLocalState(() => localError = "Passwords do not match.");
-        return;
-      }
-
-      setLocalState(() {
-        localBusy = true;
-        localError = null;
-      });
-      try {
-        final resp = await http.post(
-          Uri.parse("${widget.apiBaseUrl}/api/auth/reset-password"),
-          headers: {"Content-Type": "application/json"},
-          body: jsonEncode({
-            "email": email,
-            "code": code,
-            "password": newPassword,
-          }),
-        );
-        if (resp.statusCode < 200 || resp.statusCode >= 300) {
-          throw Exception(
-            _extractError(resp.body, fallback: "Failed to reset password"),
-          );
-        }
-        if (!mounted) return;
-        Navigator.of(context).pop();
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-              content: Text("Password reset successful. Please sign in.")),
-        );
-      } catch (e) {
-        setLocalState(
-          () => localError = "$e".replaceFirst("Exception: ", ""),
-        );
-      } finally {
-        if (mounted) {
-          setLocalState(() => localBusy = false);
-        }
-      }
-    }
-
-    await showDialog<void>(
-      context: context,
-      builder: (dialogContext) {
-        return StatefulBuilder(
-          builder: (context, setLocalState) {
-            return AlertDialog(
-              title: const Text("Reset password"),
-              content: SizedBox(
-                width: 360,
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      "A verification code was sent to $email",
-                      style: const TextStyle(
-                        fontSize: 13,
-                        color: Color(0xFF5E7179),
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    TextField(
-                      controller: codeController,
-                      keyboardType: TextInputType.number,
-                      inputFormatters: [
-                        FilteringTextInputFormatter.digitsOnly,
-                        LengthLimitingTextInputFormatter(6),
-                      ],
-                      decoration: const InputDecoration(
-                        labelText: "Verification code",
-                        border: OutlineInputBorder(),
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    TextField(
-                      controller: newPasswordController,
-                      obscureText: true,
-                      decoration: const InputDecoration(
-                        labelText: "New password",
-                        border: OutlineInputBorder(),
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    TextField(
-                      controller: confirmController,
-                      obscureText: true,
-                      decoration: const InputDecoration(
-                        labelText: "Confirm new password",
-                        border: OutlineInputBorder(),
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                    const Text(
-                      "Minimum 8 characters",
-                      style: TextStyle(fontSize: 12, color: Color(0xFF8A9CA4)),
-                    ),
-                    if (localError != null) ...[
-                      const SizedBox(height: 8),
-                      Text(
-                        localError!,
-                        style: const TextStyle(
-                          color: Color(0xFFC93C3C),
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                    ],
-                    if (localBusy) ...[
-                      const SizedBox(height: 10),
-                      const LinearProgressIndicator(),
-                    ],
-                  ],
-                ),
-              ),
-              actions: [
-                TextButton(
-                  onPressed: localBusy
-                      ? null
-                      : () => Navigator.of(dialogContext).pop(),
-                  child: const Text("Cancel"),
-                ),
-                FilledButton(
-                  onPressed: localBusy ? null : () => reset(setLocalState),
-                  child: const Text("Reset password"),
-                ),
-              ],
-            );
-          },
-        );
-      },
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => ForgotPasswordPage(
+          apiBaseUrl: widget.apiBaseUrl,
+          initialEmail: _loginController.text.trim(),
+        ),
+      ),
     );
-
-    codeController.dispose();
-    newPasswordController.dispose();
-    confirmController.dispose();
   }
 }

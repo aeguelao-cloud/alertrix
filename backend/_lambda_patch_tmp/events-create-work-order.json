@@ -1,9 +1,0 @@
-﻿{
-  "resource": "/api/alerts/{alertId}/work-orders",
-  "path": "/api/alerts/ALERT-001/work-orders",
-  "httpMethod": "POST",
-  "pathParameters": {
-    "alertId": "ALERT-001"
-  },
-  "body": "{\"actorRole\":\"Admin\",\"assignee\":\"Field Team A\",\"note\":\"Inspect affected area\"}"
-}

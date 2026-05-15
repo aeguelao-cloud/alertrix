@@ -1,4 +1,4 @@
-﻿import 'package:flutter/material.dart';
+import 'package:flutter/material.dart';
 
 import '../models/monitoring_models.dart';
 
@@ -9,9 +9,12 @@ class RiskSummaryCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final criticalCount = readings.where((r) => r.level == SensorLevel.critical).length;
-    final warningCount = readings.where((r) => r.level == SensorLevel.warning).length;
-    final normalCount = readings.where((r) => r.level == SensorLevel.normal).length;
+    final criticalCount =
+        readings.where((r) => r.level == SensorLevel.critical).length;
+    final warningCount =
+        readings.where((r) => r.level == SensorLevel.warning).length;
+    final normalCount =
+        readings.where((r) => r.level == SensorLevel.normal).length;
     final total = readings.isEmpty ? 1 : readings.length;
 
     return Card(
@@ -25,8 +28,8 @@ class RiskSummaryCard extends StatelessWidget {
             Text(
               'Risk Summary',
               style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                fontWeight: FontWeight.w700,
-              ),
+                    fontWeight: FontWeight.w700,
+                  ),
             ),
             const SizedBox(height: 12),
             _RiskBar(
@@ -80,7 +83,8 @@ class _RiskBar extends StatelessWidget {
       children: [
         SizedBox(
           width: 58,
-          child: Text(label, style: const TextStyle(fontWeight: FontWeight.w600)),
+          child:
+              Text(label, style: const TextStyle(fontWeight: FontWeight.w600)),
         ),
         Expanded(
           child: ClipRRect(
@@ -106,4 +110,3 @@ class _RiskBar extends StatelessWidget {
     );
   }
 }
-

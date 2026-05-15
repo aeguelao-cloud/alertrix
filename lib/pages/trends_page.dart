@@ -108,7 +108,7 @@ class _TrendsPageState extends State<TrendsPage> {
       padding: uiPagePadding(context),
       children: [
         const UiPageHeader(
-          systemName: 'Alertix',
+          systemName: 'Alertrix',
           title: 'Situation Trends',
           subtitle: 'Cloud telemetry trend view by metric and time range.',
         ),
@@ -200,6 +200,21 @@ class _TrendsPageState extends State<TrendsPage> {
                   child: Text(_remoteError!, style: UiText.helper),
                 ),
               ],
+              if (_remoteError != null) ...[
+                const SizedBox(height: 8),
+                Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFEFF5F7),
+                    borderRadius: BorderRadius.circular(UiRadius.input),
+                  ),
+                  child: const Text(
+                    'Latest cloud data may be stale due to device communication loss.',
+                    style: UiText.helper,
+                  ),
+                ),
+              ],
               const SizedBox(height: 12),
               SizedBox(
                 height: hasData ? 284 : 214,
@@ -216,6 +231,12 @@ class _TrendsPageState extends State<TrendsPage> {
                               criticalThreshold: _critical(_selectedMetric),
                               metricLabel: _selectedMetric.label,
                               yAxisUnit: _selectedMetric.unit,
+                              minY: _selectedMetric == SensorType.waterLevel
+                                  ? 0
+                                  : null,
+                              maxY: _selectedMetric == SensorType.waterLevel
+                                  ? 100
+                                  : null,
                               timeLabelBuilder: (dt) =>
                                   formatRangeTickLabel(dt, _selectedRange),
                               valueLabelBuilder: (v) =>
@@ -241,6 +262,8 @@ class _TrendsPageState extends State<TrendsPage> {
                                     average,
                                     null,
                                     _selectedMetric,
+                                    timeHint:
+                                        'over ${rangeWindowLabel(_selectedRange)}',
                                   )),
                               _StatChip(
                                   label: 'Peak',
@@ -264,7 +287,8 @@ class _TrendsPageState extends State<TrendsPage> {
                       )
                     : UiEmptyState(
                         icon: Icons.show_chart_outlined,
-                        title: 'No telemetry available',
+                        title:
+                            'No telemetry data received for the selected time range',
                         subtitle:
                             'No cloud data received for the selected time range',
                         reasons: const [
@@ -275,7 +299,7 @@ class _TrendsPageState extends State<TrendsPage> {
                         primaryAction: FilledButton(
                           onPressed: _loadingRemote ? null : _handleRetry,
                           style: uiPrimaryButton(),
-                          child: const Text('Retry sync'),
+                          child: const Text('Retry Sync'),
                         ),
                       ),
               ),
@@ -416,9 +440,13 @@ class _TrendsPageState extends State<TrendsPage> {
     DateTime? time,
     SensorType type, {
     bool includeTime = false,
+    String? timeHint,
   }) {
     if (value == null) return '-';
     final valueText = _formatSensorValue(value, type);
+    if (timeHint != null && timeHint.isNotEmpty) {
+      return '$valueText ($timeHint)';
+    }
     if (includeTime && time != null) {
       return '$valueText at ${formatHm(time)}';
     }
@@ -688,7 +716,7 @@ class _FilterDropdown<T> extends StatelessWidget {
         ),
         const SizedBox(height: 5),
         DropdownButtonFormField<T>(
-          initialValue: value,
+          value: value,
           decoration: const InputDecoration(
             isDense: true,
             contentPadding: EdgeInsets.symmetric(horizontal: 14, vertical: 14),

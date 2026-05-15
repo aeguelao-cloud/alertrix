@@ -43,7 +43,9 @@ Future<void> playAlertTone({
   // Secondary path: voice cue (helps on some browsers/devices where beep is muted).
   if (announce) {
     try {
-      final normalized = severityLabel.toUpperCase() == 'WARNING' ? 'Warning alert' : 'Critical alert';
+      final normalized = severityLabel.toUpperCase() == 'WARNING'
+          ? 'Warning alert'
+          : 'Critical alert';
       final utterance = html.SpeechSynthesisUtterance(normalized);
       utterance
         ..volume = 1.0

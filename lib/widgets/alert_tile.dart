@@ -1,4 +1,4 @@
-﻿import 'package:flutter/material.dart';
+import 'package:flutter/material.dart';
 
 import '../models/monitoring_models.dart';
 
@@ -31,7 +31,8 @@ class AlertTile extends StatelessWidget {
             size: 18,
           ),
         ),
-        title: Text(item.title, style: const TextStyle(fontWeight: FontWeight.w600)),
+        title: Text(item.title,
+            style: const TextStyle(fontWeight: FontWeight.w600)),
         subtitle: Text(item.zone),
         trailing: Text(
           _formatTime(item.timestamp),

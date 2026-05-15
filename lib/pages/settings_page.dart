@@ -27,8 +27,8 @@ class SettingsPage extends StatefulWidget {
 }
 
 class _SettingsPageState extends State<SettingsPage> {
-  double _waterWarning = 50;
-  double _waterCritical = 80;
+  double _waterWarning = 70;
+  double _waterCritical = 85;
   double _vibrationWarning = 2.8;
   double _vibrationCritical = 4.0;
   double _temperatureWarning = 35;
@@ -64,7 +64,7 @@ class _SettingsPageState extends State<SettingsPage> {
       padding: uiPagePadding(context),
       children: [
         const UiPageHeader(
-          systemName: 'Alertix',
+          systemName: 'Alertrix',
           title: 'Response Settings',
           subtitle:
               'System policy, threshold controls, and notification preferences.',
@@ -78,25 +78,25 @@ class _SettingsPageState extends State<SettingsPage> {
           icon: Icons.speed_outlined,
           title: 'Auto Refresh Interval',
           summary: 'Every $_refreshSeconds seconds',
-          actionLabel: 'Manage',
-          enabled: _isAdmin,
-          onTap: _isAdmin ? _editRefreshInterval : null,
+          actionLabel: _isAdmin ? 'Manage' : 'View',
+          enabled: true,
+          onTap: _isAdmin ? _editRefreshInterval : _showAdminOnlyHint,
         ),
         _ConfigTile(
           icon: Icons.timeline_outlined,
           title: 'Default Trend Window',
           summary: _defaultTrendWindow,
-          actionLabel: 'Manage',
-          enabled: _isAdmin,
-          onTap: _isAdmin ? _editDefaultTrendWindow : null,
+          actionLabel: _isAdmin ? 'Manage' : 'View',
+          enabled: true,
+          onTap: _isAdmin ? _editDefaultTrendWindow : _showAdminOnlyHint,
         ),
         _ConfigTile(
           icon: Icons.sync_alt_outlined,
           title: 'Dashboard Refresh Mode',
           summary: _refreshMode,
-          actionLabel: 'Manage',
-          enabled: _isAdmin,
-          onTap: _isAdmin ? _editRefreshMode : null,
+          actionLabel: _isAdmin ? 'Manage' : 'View',
+          enabled: true,
+          onTap: _isAdmin ? _editRefreshMode : _showAdminOnlyHint,
         ),
         SizedBox(height: sectionSpace),
         _SectionTitle(
@@ -114,9 +114,9 @@ class _SettingsPageState extends State<SettingsPage> {
                 'Warning ${_waterWarning.toStringAsFixed(0)}% | Critical ${_waterCritical.toStringAsFixed(0)}%',
             basis: 'Basis: Public InfoBanjir stages',
           ),
-          actionLabel: 'Manage',
-          enabled: _isAdmin,
-          onTap: _isAdmin ? _openWaterThresholdEditor : null,
+          actionLabel: _isAdmin ? 'Manage' : 'View',
+          enabled: true,
+          onTap: _openWaterThresholdEditor,
         ),
         _ConfigTile(
           icon: Icons.vibration_outlined,
@@ -127,9 +127,9 @@ class _SettingsPageState extends State<SettingsPage> {
                 'Warning ${_vibrationWarning.toStringAsFixed(1)} mm/s | Critical ${_vibrationCritical.toStringAsFixed(1)} mm/s',
             basis: 'Basis: prototype calibration',
           ),
-          actionLabel: 'Manage',
-          enabled: _isAdmin,
-          onTap: _isAdmin ? _openVibrationThresholdEditor : null,
+          actionLabel: _isAdmin ? 'Manage' : 'View',
+          enabled: true,
+          onTap: _openVibrationThresholdEditor,
         ),
         _ConfigTile(
           icon: Icons.thermostat_outlined,
@@ -137,12 +137,12 @@ class _SettingsPageState extends State<SettingsPage> {
           summary: '',
           summaryContent: _ThresholdSummary(
             warningCritical:
-                'Warning ${_temperatureWarning.toStringAsFixed(0)} degC | Critical ${_temperatureCritical.toStringAsFixed(0)} degC',
+                'Warning ${_temperatureWarning.toStringAsFixed(0)}°C | Critical ${_temperatureCritical.toStringAsFixed(0)}°C',
             basis: 'Basis: Malaysian heat-wave scale',
           ),
-          actionLabel: 'Manage',
-          enabled: _isAdmin,
-          onTap: _isAdmin ? _openTemperatureThresholdEditor : null,
+          actionLabel: _isAdmin ? 'Manage' : 'View',
+          enabled: true,
+          onTap: _openTemperatureThresholdEditor,
         ),
         _ThresholdAuditCard(
           title: 'Threshold Audit',
@@ -181,14 +181,17 @@ class _SettingsPageState extends State<SettingsPage> {
           onTap: _editAlertSound,
         ),
         SizedBox(height: sectionSpace),
-        const _SectionTitle(title: 'Site and User'),
+        _SectionTitle(
+          title: 'Site and User',
+          subtitle: _isAdmin ? null : 'Site fields are read-only in User role',
+        ),
         _ConfigTile(
           icon: Icons.apartment_outlined,
           title: 'Site Name',
           summary: _siteName,
-          actionLabel: _isAdmin ? 'Manage' : '',
-          enabled: _isAdmin,
-          onTap: _isAdmin ? _openSiteProfileEditor : null,
+          actionLabel: _isAdmin ? 'Manage' : 'View',
+          enabled: true,
+          onTap: _openSiteProfileEditor,
         ),
         _ConfigTile(
           icon: Icons.badge_outlined,
@@ -201,9 +204,9 @@ class _SettingsPageState extends State<SettingsPage> {
           icon: Icons.place_outlined,
           title: 'Device Location',
           summary: _loadingDeviceLocation ? 'Syncing...' : _deviceLocation,
-          actionLabel: _isAdmin ? 'Manage' : '',
-          enabled: _isAdmin,
-          onTap: _isAdmin ? _openDeviceLocationEditor : null,
+          actionLabel: _isAdmin ? 'Manage' : 'View',
+          enabled: true,
+          onTap: _openDeviceLocationEditor,
         ),
       ],
     );
@@ -228,6 +231,14 @@ class _SettingsPageState extends State<SettingsPage> {
             });
           },
         ),
+      ),
+    );
+  }
+
+  void _showAdminOnlyHint() {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('This setting is read-only for User role.'),
       ),
     );
   }
@@ -260,7 +271,7 @@ class _SettingsPageState extends State<SettingsPage> {
       MaterialPageRoute(
         builder: (_) => _ThresholdEditorPage(
           title: 'Edit Temperature Thresholds',
-          unit: 'degC',
+          unit: '°C',
           warning: _temperatureWarning,
           critical: _temperatureCritical,
           editable: _isAdmin,

@@ -37,7 +37,7 @@ class _AlertrixAppState extends State<AlertrixApp> {
       builder: (context, _) {
         return MaterialApp(
           debugShowCheckedModeBanner: false,
-          title: 'Alertix Response Overview',
+          title: 'Alertrix Response Overview',
           theme: ThemeData(
             colorScheme: ColorScheme.fromSeed(
               seedColor: const Color(0xFF0A7E8C),

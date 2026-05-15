@@ -10,9 +10,9 @@
     "test": "echo \"add tests if needed\""
   },
   "dependencies": {
+    "@aws-sdk/client-dynamodb": "^3.862.0",
     "@aws-sdk/client-sesv2": "^3.862.0",
     "@aws-sdk/client-sns": "^3.862.0",
-    "@aws-sdk/client-dynamodb": "^3.862.0",
     "@aws-sdk/lib-dynamodb": "^3.862.0",
     "firebase-admin": "^13.6.0"
   }

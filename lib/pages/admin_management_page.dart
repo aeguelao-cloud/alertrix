@@ -1,4 +1,4 @@
-﻿import 'dart:convert';
+import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
@@ -41,9 +41,10 @@ class _AdminManagementPageState extends State<AdminManagementPage> {
       padding: const EdgeInsets.all(UiSpace.page),
       children: [
         UiPageHeader(
-          systemName: 'Alertix',
+          systemName: 'Alertrix',
           title: 'Admin Management',
-          subtitle: '$activeCount active admin\nEmail notifications are sent to active administrators only',
+          subtitle:
+              '$activeCount active admin\nEmail notifications are sent to active administrators only',
           trailing: Wrap(
             spacing: 8,
             children: [
@@ -137,7 +138,7 @@ class _AdminManagementPageState extends State<AdminManagementPage> {
           Text(item.email, style: UiText.body),
           const SizedBox(height: 8),
           Text(
-            'Role: ${item.role}  •  Created: ${item.createdAt ?? '—'}  •  Updated: ${item.updatedAt ?? '—'}',
+            'Role: ${item.role}  ?  Created: ${item.createdAt ?? '—'}  ?  Updated: ${item.updatedAt ?? '—'}',
             style: UiText.helper,
           ),
           const SizedBox(height: 12),
@@ -159,7 +160,9 @@ class _AdminManagementPageState extends State<AdminManagementPage> {
                           status: active ? 'inactive' : 'active',
                         ),
                 style: uiSecondaryButton(),
-                icon: Icon(active ? Icons.pause_circle_outline : Icons.play_circle_outline),
+                icon: Icon(active
+                    ? Icons.pause_circle_outline
+                    : Icons.play_circle_outline),
                 label: Text(active ? 'Deactivate' : 'Activate'),
               ),
               OutlinedButton.icon(
@@ -196,7 +199,8 @@ class _AdminManagementPageState extends State<AdminManagementPage> {
       );
 
       if (resp.statusCode < 200 || resp.statusCode >= 300) {
-        throw Exception(_extractError(resp.body, fallback: 'Failed to load admins'));
+        throw Exception(
+            _extractError(resp.body, fallback: 'Failed to load admins'));
       }
 
       final json = jsonDecode(resp.body) as Map<String, dynamic>;
@@ -256,11 +260,12 @@ class _AdminManagementPageState extends State<AdminManagementPage> {
                   ),
                   const SizedBox(height: 10),
                   DropdownButtonFormField<String>(
-                    initialValue: role,
+                    value: role,
                     decoration: const InputDecoration(labelText: 'Role'),
                     items: const [
                       DropdownMenuItem(value: 'admin', child: Text('admin')),
-                      DropdownMenuItem(value: 'super_admin', child: Text('super_admin')),
+                      DropdownMenuItem(
+                          value: 'super_admin', child: Text('super_admin')),
                     ],
                     onChanged: (value) {
                       if (value == null) return;
@@ -280,11 +285,13 @@ class _AdminManagementPageState extends State<AdminManagementPage> {
                     final email = emailCtrl.text.trim();
                     if (name.isEmpty || email.isEmpty) {
                       ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(content: Text('Name and email are required.')),
+                        const SnackBar(
+                            content: Text('Name and email are required.')),
                       );
                       return;
                     }
-                    Navigator.of(context).pop(AdminFormData(name: name, email: email, role: role));
+                    Navigator.of(context).pop(
+                        AdminFormData(name: name, email: email, role: role));
                   },
                   child: const Text('Save'),
                 ),
@@ -314,13 +321,15 @@ class _AdminManagementPageState extends State<AdminManagementPage> {
       );
 
       if (resp.statusCode < 200 || resp.statusCode >= 300) {
-        throw Exception(_extractError(resp.body, fallback: 'Failed to create admin'));
+        throw Exception(
+            _extractError(resp.body, fallback: 'Failed to create admin'));
       }
       await _loadAdmins();
     });
   }
 
-  Future<void> _updateAdmin({required String adminId, required AdminFormData data}) async {
+  Future<void> _updateAdmin(
+      {required String adminId, required AdminFormData data}) async {
     await _runAction(() async {
       final resp = await http.post(
         Uri.parse('${widget.apiBaseUrl}/api/admins/$adminId'),
@@ -333,13 +342,15 @@ class _AdminManagementPageState extends State<AdminManagementPage> {
       );
 
       if (resp.statusCode < 200 || resp.statusCode >= 300) {
-        throw Exception(_extractError(resp.body, fallback: 'Failed to update admin'));
+        throw Exception(
+            _extractError(resp.body, fallback: 'Failed to update admin'));
       }
       await _loadAdmins();
     });
   }
 
-  Future<void> _setStatus({required AdminItem item, required String status}) async {
+  Future<void> _setStatus(
+      {required AdminItem item, required String status}) async {
     await _runAction(() async {
       final resp = await http.post(
         Uri.parse('${widget.apiBaseUrl}/api/admins/${item.adminId}/status'),
@@ -348,7 +359,8 @@ class _AdminManagementPageState extends State<AdminManagementPage> {
       );
 
       if (resp.statusCode < 200 || resp.statusCode >= 300) {
-        throw Exception(_extractError(resp.body, fallback: 'Failed to update status'));
+        throw Exception(
+            _extractError(resp.body, fallback: 'Failed to update status'));
       }
       await _loadAdmins();
     });
@@ -381,7 +393,8 @@ class _AdminManagementPageState extends State<AdminManagementPage> {
       );
 
       if (resp.statusCode < 200 || resp.statusCode >= 300) {
-        throw Exception(_extractError(resp.body, fallback: 'Failed to delete admin'));
+        throw Exception(
+            _extractError(resp.body, fallback: 'Failed to delete admin'));
       }
       await _loadAdmins();
     });
@@ -416,7 +429,9 @@ class _AdminManagementPageState extends State<AdminManagementPage> {
   String _extractError(String body, {required String fallback}) {
     try {
       final json = jsonDecode(body) as Map<String, dynamic>;
-      return json['error']?.toString() ?? json['message']?.toString() ?? fallback;
+      return json['error']?.toString() ??
+          json['message']?.toString() ??
+          fallback;
     } catch (_) {
       return fallback;
     }
@@ -448,15 +463,18 @@ class _AdminSummaryRow extends StatelessWidget {
           runSpacing: UiSpace.gap,
           children: [
             _summaryCard('Total admins', '$total', UiBadgeTone.stable, width),
-            _summaryCard('Active admins', '$active', UiBadgeTone.healthy, width),
-            _summaryCard('Inactive admins', '$inactive', UiBadgeTone.noTelemetry, width),
+            _summaryCard(
+                'Active admins', '$active', UiBadgeTone.healthy, width),
+            _summaryCard(
+                'Inactive admins', '$inactive', UiBadgeTone.noTelemetry, width),
           ],
         );
       },
     );
   }
 
-  Widget _summaryCard(String label, String value, UiBadgeTone tone, double width) {
+  Widget _summaryCard(
+      String label, String value, UiBadgeTone tone, double width) {
     return SizedBox(
       width: width,
       child: UiCard(

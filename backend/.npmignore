@@ -1,0 +1,7 @@
+.aws-sam/
+.aws-sam-build/
+.sam_build_new/
+.sam_cache_new/
+_lambda_patch_tmp/
+admin_patch.zip
+events-*.json

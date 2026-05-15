@@ -37,18 +37,19 @@ class SensorCard extends StatelessWidget {
             Text(
               sensor.type.label,
               style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                fontWeight: FontWeight.w600,
-                color: const Color(0xFF3A4A50),
-              ),
+                    fontWeight: FontWeight.w600,
+                    color: const Color(0xFF3A4A50),
+                  ),
             ),
             const Spacer(),
             Text(
               sensor.formattedValue,
               style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                fontWeight: FontWeight.w800,
-              ),
+                    fontWeight: FontWeight.w800,
+                  ),
             ),
-            Text(sensor.type.unit, style: const TextStyle(color: Color(0xFF72858C))),
+            Text(sensor.type.unit,
+                style: const TextStyle(color: Color(0xFF72858C))),
             const SizedBox(height: 6),
             Text(
               sensor.trendText,

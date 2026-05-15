@@ -71,9 +71,14 @@ class _HomeShellPageState extends State<HomeShellPage> {
   static const Duration _popupWindow = Duration(seconds: 15);
   static const String _defaultZone = 'Zone A - Pump Station';
   bool get _isAdmin => widget.user.role == UserRole.admin;
+  bool get _isSuperAdmin {
+    final id = widget.user.username.trim().toLowerCase();
+    return id == 'admin@alertrix.local' || id == 'admin';
+  }
+
   List<int> get _visibleNavIndexes {
     final base =
-        _isAdmin ? const <int>[0, 1, 2, 3, 4, 5] : const <int>[0, 1, 2, 4];
+        _isSuperAdmin ? const <int>[0, 1, 2, 3, 4, 5] : const <int>[0, 1, 2, 4];
     final seen = <int>{};
     return base.where(seen.add).toList(growable: false);
   }
@@ -161,6 +166,7 @@ class _HomeShellPageState extends State<HomeShellPage> {
           style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700),
         ),
         actions: [
+          _buildQuickPopupButton(),
           _buildRefreshActionButton(),
           _buildPushActionButton(),
           _buildUserMenuButton(),
@@ -178,7 +184,7 @@ class _HomeShellPageState extends State<HomeShellPage> {
                       width: 28,
                       height: 28,
                       decoration: BoxDecoration(
-                        color: const Color(0xFF0A7E8C).withValues(alpha: 0.14),
+                        color: const Color(0xFF0A7E8C).withOpacity(0.14),
                         borderRadius: BorderRadius.circular(8),
                       ),
                       child: const Icon(
@@ -190,7 +196,7 @@ class _HomeShellPageState extends State<HomeShellPage> {
                     const SizedBox(width: 8),
                     const Expanded(
                       child: Text(
-                        'Alertix',
+                        'Alertrix',
                         style: TextStyle(
                           fontSize: 16,
                           fontWeight: FontWeight.w800,
@@ -228,7 +234,7 @@ class _HomeShellPageState extends State<HomeShellPage> {
                       ),
                       selected: selected,
                       selectedTileColor:
-                          const Color(0xFF0A7E8C).withValues(alpha: 0.10),
+                          const Color(0xFF0A7E8C).withOpacity(0.10),
                       shape: RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(10),
                       ),
@@ -326,7 +332,7 @@ class _HomeShellPageState extends State<HomeShellPage> {
                   width: 28,
                   height: 28,
                   decoration: BoxDecoration(
-                    color: const Color(0xFF0A7E8C).withValues(alpha: 0.14),
+                    color: const Color(0xFF0A7E8C).withOpacity(0.14),
                     borderRadius: BorderRadius.circular(8),
                   ),
                   child: const Icon(
@@ -338,7 +344,7 @@ class _HomeShellPageState extends State<HomeShellPage> {
                 const SizedBox(width: 8),
                 const Expanded(
                   child: Text(
-                    'Alertix',
+                    'Alertrix',
                     style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800),
                   ),
                 ),
@@ -367,7 +373,7 @@ class _HomeShellPageState extends State<HomeShellPage> {
                       ),
                       decoration: BoxDecoration(
                         color: selected
-                            ? const Color(0xFF0A7E8C).withValues(alpha: 0.14)
+                            ? const Color(0xFF0A7E8C).withOpacity(0.14)
                             : Colors.transparent,
                         borderRadius: BorderRadius.circular(12),
                       ),
@@ -434,7 +440,7 @@ class _HomeShellPageState extends State<HomeShellPage> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               const Text(
-                'Alertix',
+                'Alertrix',
                 style: TextStyle(fontSize: 14, fontWeight: FontWeight.w800),
               ),
               Text(
@@ -458,6 +464,7 @@ class _HomeShellPageState extends State<HomeShellPage> {
           ),
         ),
         const SizedBox(width: 8),
+        _buildQuickPopupButton(),
         _buildRefreshActionButton(),
         _buildPushActionButton(),
         _buildUserMenuButton(),
@@ -475,10 +482,11 @@ class _HomeShellPageState extends State<HomeShellPage> {
     final cloudTone =
         hasCloudError ? _TopStatusTone.warning : _TopStatusTone.healthy;
     final apiLabel = _controller.usingRemoteApi ? 'Connected' : 'Fallback';
-    final pushLabel = ready ? 'On' : 'Off';
+    final pushLabel =
+        ready ? 'Enabled' : (disabled ? 'Off' : 'Permission Required');
     final pushTone = ready
         ? _TopStatusTone.healthy
-        : (disabled ? _TopStatusTone.neutral : _TopStatusTone.neutral);
+        : (disabled ? _TopStatusTone.neutral : _TopStatusTone.warning);
     final syncText = lastSync == null ? '--' : _formatHeaderTime(lastSync);
 
     return Row(
@@ -525,9 +533,37 @@ class _HomeShellPageState extends State<HomeShellPage> {
     );
   }
 
+  Widget _buildQuickPopupButton() {
+    return IconButton(
+      tooltip: 'Show popup',
+      onPressed: _showQuickPopup,
+      icon: const Icon(Icons.open_in_new_rounded),
+    );
+  }
+
+  Future<void> _showQuickPopup() async {
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) {
+        return AlertDialog(
+          title: const Text('Notification'),
+          content: const Text('Popup channel is active.'),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(),
+              child: const Text('Close'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
   Widget _buildPushActionButton() {
     return IconButton(
-      tooltip: 'Notification',
+      tooltip: (_pushToken?.isNotEmpty ?? false)
+          ? 'Notifications Enabled'
+          : 'Enable Push Notifications',
       onPressed: _manualPushBusy ? null : _manualRetryPushSetupWithFeedback,
       icon: _manualPushBusy
           ? const SizedBox(
@@ -547,18 +583,34 @@ class _HomeShellPageState extends State<HomeShellPage> {
     return PopupMenuButton<String>(
       tooltip: 'User menu',
       onSelected: (value) {
+        if (value == 'profile') {
+          _showProfileDialog();
+          return;
+        }
+        if (value == 'permission') {
+          unawaited(_manualRetryPushSetupWithFeedback());
+          return;
+        }
         if (value == 'logout') widget.onLogout();
       },
       itemBuilder: (context) => [
+        const PopupMenuItem<String>(
+          value: 'profile',
+          child: Text('Profile'),
+        ),
+        const PopupMenuItem<String>(
+          value: 'permission',
+          child: Text('Notification Permission'),
+        ),
         PopupMenuItem<String>(
           enabled: false,
-          value: 'user',
-          child: Text('${widget.user.username} (${widget.user.role.label})'),
+          value: 'role',
+          child: Text('Role: ${widget.user.role.label}'),
         ),
         const PopupMenuDivider(),
         const PopupMenuItem<String>(
           value: 'logout',
-          child: Text('Log out'),
+          child: Text('Logout'),
         ),
       ],
       child: const Padding(
@@ -651,7 +703,7 @@ class _HomeShellPageState extends State<HomeShellPage> {
                   ? null
                   : () => unawaited(_manualRefreshWithFeedback()),
               icon: const Icon(Icons.refresh),
-              label: const Text('Retry sync'),
+              label: const Text('Retry Sync'),
             ),
           ],
         ),
@@ -739,7 +791,39 @@ class _HomeShellPageState extends State<HomeShellPage> {
           onIgnore: () => _controller.ignoreAlert(alert.id, widget.user.role),
           onCreateWorkOrder: () =>
               _controller.createWorkOrder(alert.id, widget.user.role),
+          onSilenceBuzzer: () => _silenceCurrentAlertSound(
+            zoneOverride: alert.zone,
+          ),
         ),
+      ),
+    );
+  }
+
+  Future<void> _showProfileDialog() async {
+    if (!mounted) return;
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Profile'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('User: ${widget.user.username}'),
+            const SizedBox(height: 6),
+            Text('Role: ${widget.user.role.label}'),
+            const SizedBox(height: 6),
+            Text(
+              'Push Status: ${(_pushToken?.isNotEmpty ?? false) ? 'Enabled' : 'Permission Required'}',
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(),
+            child: const Text('Close'),
+          ),
+        ],
       ),
     );
   }

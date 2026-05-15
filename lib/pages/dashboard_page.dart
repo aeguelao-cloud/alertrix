@@ -37,16 +37,27 @@ class _DashboardPageState extends State<DashboardPage> {
     final snapshot = widget.snapshot;
     final alerts = snapshot.alerts;
     final readings = snapshot.readings;
+    final incidentGroups = _aggregateIncidentGroups(alerts);
 
     final incident = _topIncident(alerts);
-    final criticalCount =
-        alerts.where((e) => e.severity == SensorLevel.critical).length;
-    final warningCount =
-        alerts.where((e) => e.severity == SensorLevel.warning).length;
-    final openAlerts = criticalCount + warningCount;
+    final criticalCount = incidentGroups
+        .where((e) => e.source.severity == SensorLevel.critical)
+        .length;
+    final warningCount = incidentGroups
+        .where((e) => e.source.severity == SensorLevel.warning)
+        .length;
+    final openAlerts = incidentGroups.length;
+    final totalAssets = 1 + activeSensorTypes.length;
     final unavailableSensors = activeSensorTypes
         .where((t) => _readingByType(readings, t) == null)
         .length;
+    final unavailableAssets =
+        readings.isEmpty ? totalAssets : unavailableSensors;
+    final telemetryStatus = unavailableAssets == 0
+        ? 'Healthy'
+        : (unavailableAssets < totalAssets
+            ? 'Partial / Degraded'
+            : 'No Telemetry');
     final series =
         _seriesFor(_selectedMetric, snapshot.history, _selectedRange);
 
@@ -77,7 +88,7 @@ class _DashboardPageState extends State<DashboardPage> {
       padding: uiPagePadding(context),
       children: [
         const UiPageHeader(
-          systemName: 'Alertix',
+          systemName: 'Alertrix',
           title: 'Response Overview',
           subtitle: 'Live incident posture and device telemetry status.',
         ),
@@ -101,9 +112,24 @@ class _DashboardPageState extends State<DashboardPage> {
               helper: '$openAlerts requires acknowledgment',
             ),
             _SummaryData(
+              title: 'Critical',
+              value: '$criticalCount',
+              helper: 'Requires immediate response',
+            ),
+            _SummaryData(
+              title: 'Warning',
+              value: '$warningCount',
+              helper: 'Monitor and assess impact',
+            ),
+            _SummaryData(
+              title: 'Telemetry Status',
+              value: telemetryStatus,
+              helper: '$unavailableAssets/$totalAssets sensors unavailable',
+            ),
+            _SummaryData(
               title: 'Site Health',
-              value: '${readings.isEmpty ? 0 : 1}/1',
-              helper: '$unavailableSensors sensors unavailable',
+              value: '${unavailableAssets}/$totalAssets',
+              helper: '$unavailableAssets sensors unavailable',
             ),
             _SummaryData(
               title: 'Latest Sync',
@@ -359,7 +385,7 @@ class _IncidentCard extends StatelessWidget {
           const SizedBox(height: 6),
           Text(
             hasIncident
-                ? '${incident!.title} in ${incident!.zone} at ${_hhmm(incident!.timestamp)}'
+                ? '${_formatAlertTitle(incident!.title)} in ${incident!.zone} at ${_hhmm(incident!.timestamp)}'
                 : 'No active incident to summarize.',
             style: UiText.body,
           ),
@@ -702,6 +728,12 @@ class _TrendsCard extends StatelessWidget {
                           criticalThreshold: _critical(selectedMetric),
                           metricLabel: selectedMetric.label,
                           yAxisUnit: selectedMetric.unit,
+                          minY: selectedMetric == SensorType.waterLevel
+                              ? 0
+                              : null,
+                          maxY: selectedMetric == SensorType.waterLevel
+                              ? 100
+                              : null,
                           timeLabelBuilder: (dt) =>
                               formatRangeTickLabel(dt, selectedRange),
                           valueLabelBuilder: (v) =>
@@ -715,7 +747,8 @@ class _TrendsCard extends StatelessWidget {
                       const Spacer(),
                       UiEmptyState(
                         icon: Icons.cloud_off_outlined,
-                        title: 'No telemetry available',
+                        title:
+                            'No telemetry data received for the selected time range',
                         subtitle:
                             'No cloud data received for the selected time range',
                         reasons: const [
@@ -735,7 +768,7 @@ class _TrendsCard extends StatelessWidget {
                                     color: Colors.white,
                                   ),
                                 )
-                              : const Text('Retry sync'),
+                              : const Text('Retry Sync'),
                         ),
                         secondaryAction: OutlinedButton(
                           onPressed: onViewDeviceStatus,
@@ -826,13 +859,14 @@ class _RecentAlertsCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final compact = uiIsCompactLayout(context);
+    final items = _aggregateRecentAlertLog(alerts);
     return UiCard(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           const Text('Recent Alert Log', style: UiText.sectionTitle),
           const SizedBox(height: 10),
-          if (alerts.isEmpty)
+          if (items.isEmpty)
             SizedBox(
               height: 240,
               child: Center(
@@ -859,14 +893,14 @@ class _RecentAlertsCard extends StatelessWidget {
                     OutlinedButton(
                       onPressed: onViewQueue,
                       style: uiSecondaryButton(),
-                      child: const Text('Open incident queue'),
+                      child: const Text('Open Incident Queue'),
                     ),
                   ],
                 ),
               ),
             )
           else
-            ...alerts.take(8).map(
+            ...items.take(8).map(
                   (alert) => Container(
                     margin: const EdgeInsets.only(bottom: 8),
                     padding: const EdgeInsets.all(10),
@@ -878,7 +912,8 @@ class _RecentAlertsCard extends StatelessWidget {
                         ? Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              Text('${alert.zone} | ${alert.title}',
+                              Text(
+                                  '${alert.zone} | ${_formatAlertTitle(alert.title)}',
                                   style: UiText.cardTitle),
                               const SizedBox(height: 4),
                               Text(_hhmm(alert.timestamp),
@@ -889,12 +924,11 @@ class _RecentAlertsCard extends StatelessWidget {
                                 runSpacing: 8,
                                 children: [
                                   UiBadge(
-                                    label: alert.severity ==
-                                            SensorLevel.critical
-                                        ? 'Critical'
-                                        : 'Warning',
-                                    tone: alert.severity ==
-                                            SensorLevel.critical
+                                    label:
+                                        alert.severity == SensorLevel.critical
+                                            ? 'Critical'
+                                            : 'Warning',
+                                    tone: alert.severity == SensorLevel.critical
                                         ? UiBadgeTone.critical
                                         : UiBadgeTone.warning,
                                   ),
@@ -913,7 +947,8 @@ class _RecentAlertsCard extends StatelessWidget {
                                 child: Column(
                                   crossAxisAlignment: CrossAxisAlignment.start,
                                   children: [
-                                    Text('${alert.zone} | ${alert.title}',
+                                    Text(
+                                        '${alert.zone} | ${_formatAlertTitle(alert.title)}',
                                         style: UiText.cardTitle),
                                     const SizedBox(height: 4),
                                     Text(_hhmm(alert.timestamp),
@@ -1011,7 +1046,7 @@ class _DeviceOverviewCard extends StatelessWidget {
                             TextButton(
                               onPressed: () {},
                               style: uiLinkButton(),
-                              child: const Text('More detail'),
+                              child: const Text('View Details'),
                             ),
                           ],
                         ),
@@ -1049,7 +1084,7 @@ class _DeviceOverviewCard extends StatelessWidget {
                                 TextButton(
                                   onPressed: () {},
                                   style: uiLinkButton(),
-                                  child: const Text('More detail'),
+                                  child: const Text('View Details'),
                                 ),
                               ],
                             ),
@@ -1141,4 +1176,74 @@ class _DeviceRow {
   final UiBadgeTone tone;
   final String latestTelemetry;
   final String actionLabel;
+}
+
+List<_IncidentGroup> _aggregateIncidentGroups(List<AlertEvent> events) {
+  final buckets = <String, List<AlertEvent>>{};
+  for (final event in events) {
+    final bucketStart = DateTime(
+      event.timestamp.year,
+      event.timestamp.month,
+      event.timestamp.day,
+      event.timestamp.hour,
+      (event.timestamp.minute ~/ 10) * 10,
+    );
+    final key =
+        '${event.zone}|${event.severity.name}|${bucketStart.toIso8601String()}|${_sensorKeyFromTitle(event.title)}';
+    buckets.putIfAbsent(key, () => <AlertEvent>[]).add(event);
+  }
+
+  final groups = buckets.values.map((group) {
+    group.sort((a, b) => b.timestamp.compareTo(a.timestamp));
+    return _IncidentGroup(
+      source: group.first,
+      occurrences: group.length,
+      latestTimestamp: group.first.timestamp,
+    );
+  }).toList(growable: false);
+
+  groups.sort((a, b) {
+    final sev = b.source.severity.index.compareTo(a.source.severity.index);
+    if (sev != 0) return sev;
+    return b.latestTimestamp.compareTo(a.latestTimestamp);
+  });
+  return groups;
+}
+
+List<AlertEvent> _aggregateRecentAlertLog(List<AlertEvent> events) {
+  return _aggregateIncidentGroups(events)
+      .map((group) => group.source)
+      .toList(growable: false);
+}
+
+String _sensorKeyFromTitle(String title) {
+  final lower = title.toLowerCase();
+  if (lower.contains('water')) return 'water';
+  if (lower.contains('vibration')) return 'vibration';
+  if (lower.contains('temp')) return 'temperature';
+  return 'misc';
+}
+
+String _formatAlertTitle(String raw) {
+  if (raw.trim().isEmpty) return 'Alert Triggered';
+  final normalized = raw
+      .replaceAll('waterLevel', 'Water level')
+      .replaceAll('water level', 'Water level')
+      .replaceAll('temperature', 'Temperature')
+      .replaceAll('vibration', 'Vibration')
+      .replaceAll('threshold exceeded', 'threshold exceeded')
+      .trim();
+  return '${normalized[0].toUpperCase()}${normalized.substring(1)}';
+}
+
+class _IncidentGroup {
+  const _IncidentGroup({
+    required this.source,
+    required this.occurrences,
+    required this.latestTimestamp,
+  });
+
+  final AlertEvent source;
+  final int occurrences;
+  final DateTime latestTimestamp;
 }

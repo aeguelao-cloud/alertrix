@@ -86,6 +86,9 @@ if ($selectedPort -ne [int]$cfg.WebPort) {
   Write-Host "Preferred port $($cfg.WebPort) is busy, switching to $selectedPort." -ForegroundColor Yellow
 }
 Write-Host "Device: $($cfg.Device)  Port: $selectedPort"
+if ($cfg.Device -eq "web-server") {
+  Write-Host "Open URL: http://localhost:$selectedPort/" -ForegroundColor Green
+}
 Write-Host ""
 
 try {
@@ -106,6 +109,9 @@ $args = @(
   "--web-port", "$selectedPort",
   "--dart-define=API_BASE_URL=$($cfg.ApiBaseUrl)"
 )
+if ($cfg.Device -eq "web-server") {
+  $args += "--web-hostname=0.0.0.0"
+}
 
 if ($cfg.Device -in @("chrome", "edge")) {
   if ($cfg.UseFreshChromeProfile -and $cfg.ChromeUserDataDir) {

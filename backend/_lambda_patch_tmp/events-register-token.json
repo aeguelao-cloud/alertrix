@@ -1,6 +1,0 @@
-﻿{
-  "resource": "/api/push/register-token",
-  "path": "/api/push/register-token",
-  "httpMethod": "POST",
-  "body": "{\"token\":\"sample_fcm_token\",\"userId\":\"operator01\",\"platform\":\"web\"}"
-}

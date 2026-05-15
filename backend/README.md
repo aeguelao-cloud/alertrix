@@ -30,6 +30,24 @@ This backend supports:
 
 Role context comes from request headers `X-User-Role` and `X-User-Id`.
 
+## Device ingest flow (MQTT-first)
+
+1. ESP32 publishes sensor data to MQTT topic `alertrix/sensors/ingest` (AWS IoT Core).
+2. IoT Rule triggers Lambda `IngestSensorDataFunction`.
+3. Lambda stores sensor data / alerts in DynamoDB and sends push notifications.
+4. HTTP endpoint `POST /api/sensors/ingest` remains available as compatibility fallback.
+
+Accepted ingest payload fields:
+
+```json
+{
+  "sensorType": "waterLevel",
+  "value": 91,
+  "zone": "Zone A - Pump Station",
+  "capturedAt": "2026-05-14T12:00:00Z"
+}
+```
+
 ## FCM flow
 
 1. Flutter gets FCM token via `firebase_messaging`.

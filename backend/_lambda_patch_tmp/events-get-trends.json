@@ -1,7 +1,0 @@
-{
-  "queryStringParameters": {
-    "device": "All Devices",
-    "metric": "waterLevel",
-    "range": "24H"
-  }
-}

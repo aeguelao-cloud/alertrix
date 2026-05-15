@@ -128,12 +128,31 @@ exports.handler = async (event) => {
 function parsePayload(event) {
   // HTTP path: API Gateway payload lives in event.body (string).
   if (typeof event?.body === "string" && event.body.trim().length > 0) {
-    return JSON.parse(event.body);
+    const parsed = JSON.parse(event.body);
+    if (parsed && typeof parsed === "object") return parsed;
   }
-  // IoT Core path: rule engine forwards JSON fields directly on event.
+
+  // Some IoT rules wrap payload as object in body.
+  if (event?.body && typeof event.body === "object") {
+    return event.body;
+  }
+
+  // ESP32/device-shadow style envelopes:
+  // { state: { reported: { sensorType, value, zone, capturedAt } } }
+  if (event?.state?.reported && typeof event.state.reported === "object") {
+    return event.state.reported;
+  }
+
+  // Generic "payload" wrappers.
+  if (event?.payload && typeof event.payload === "object") {
+    return event.payload;
+  }
+
+  // IoT Core direct event: rule engine forwards JSON fields on top-level event.
   if (event && typeof event === "object") {
     return event;
   }
+
   return {};
 }
 

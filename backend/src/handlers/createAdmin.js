@@ -1,12 +1,12 @@
 "use strict";
 
 const { badRequest, ok, serverError } = require("../common/response");
-const { ensureAdminRequest } = require("../common/adminAuth");
+const { ensureSuperAdminRequest } = require("../common/adminAuth");
 const { createAdmin } = require("../common/admins");
 
 exports.handler = async (event) => {
   try {
-    const gate = ensureAdminRequest(event);
+    const gate = ensureSuperAdminRequest(event);
     if (!gate.ok) return gate.response;
 
     const body = JSON.parse(event.body || "{}");
@@ -29,4 +29,3 @@ exports.handler = async (event) => {
     return serverError("Failed to create admin");
   }
 };
-

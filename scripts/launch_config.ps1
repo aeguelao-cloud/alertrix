@@ -4,7 +4,7 @@
 
   # Flutter web runtime config.
   WebPort = 18082
-  Device = "edge"
+  Device = "web-server"
   EnableWebFcm = $true
   UseFreshChromeProfile = $true
   ChromeUserDataDir = "F:\\403\\demo\\.chrome_fcm_profile"

@@ -1,6 +1,0 @@
-﻿{
-  "resource": "/api/push/test-alert",
-  "path": "/api/push/test-alert",
-  "httpMethod": "POST",
-  "body": "{}"
-}

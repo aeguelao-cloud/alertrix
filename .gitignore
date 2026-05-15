@@ -24,3 +24,18 @@ backend/.aws-sam-build/
 Thumbs.db
 .vscode/
 .idea/
+
+# Local browser profile/cache (never commit)
+.chrome_fcm_profile/
+.chrome_fcm_profile_chrome/
+.chrome_fcm_profile_diag2/
+.chrome_fcm_profile_diag3/
+
+# Local secrets
+backend/env.local.json
+arduino/DHT11WaterLevelPractice/mqtt_secrets.h
+
+# Local temp/build folders
+backend/.sam_build_new/
+tmp/
+tmp_logs/
