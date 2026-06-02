@@ -1,8 +1,10 @@
-﻿"use strict";
+"use strict";
 
-const { GetCommand, PutCommand, UpdateCommand } = require("@aws-sdk/lib-dynamodb");
+const { PutCommand, UpdateCommand } = require("@aws-sdk/lib-dynamodb");
 const { docClient, tables } = require("../common/dynamo");
 const { roleCanCreateWorkOrder } = require("../common/policy");
+const { ALERT_STATUS } = require("../common/alertStatus");
+const { fetchIncidentById, updateIncidentStatus } = require("../common/incidentStore");
 const { ok, badRequest, forbidden, notFound, serverError } = require("../common/response");
 
 const makeWorkOrderId = () => {
@@ -12,29 +14,23 @@ const makeWorkOrderId = () => {
 
 exports.handler = async (event) => {
   try {
-    const alertId = event.pathParameters?.alertId;
-    if (!alertId) {
+    const incidentId = event.pathParameters?.alertId;
+    if (!incidentId) {
       return badRequest("Missing path parameter: alertId");
     }
 
     const body = JSON.parse(event.body || "{}");
     const actorRole = body.actorRole || "Operator";
     const assignee = body.assignee || "Emergency Team";
-    const note = body.note || "Generated from alert workflow";
+    const note = body.note || "Generated from incident workflow";
 
     if (!roleCanCreateWorkOrder(actorRole)) {
       return forbidden("Only Admin can create work orders");
     }
 
-    const existingAlert = await docClient.send(
-      new GetCommand({
-        TableName: tables.alert,
-        Key: { alertId }
-      })
-    );
-
-    if (!existingAlert.Item) {
-      return notFound("Alert not found");
+    const existingIncident = await fetchIncidentById(incidentId);
+    if (!existingIncident) {
+      return notFound("Incident not found");
     }
 
     const workOrderId = makeWorkOrderId();
@@ -42,34 +38,38 @@ exports.handler = async (event) => {
 
     const workOrder = {
       workOrderId,
-      alertId,
+      incidentId,
+      alertId: incidentId,
       status: "OPEN",
       assignee,
       note,
       createdAt: now,
-      createdByRole: actorRole
+      createdByRole: actorRole,
     };
 
     await docClient.send(
       new PutCommand({
         TableName: tables.workOrder,
-        Item: workOrder
+        Item: workOrder,
       })
     );
 
+    await updateIncidentStatus({
+      incidentId,
+      status: ALERT_STATUS.ACKNOWLEDGED,
+      actorRole,
+    });
+
     await docClient.send(
       new UpdateCommand({
-        TableName: tables.alert,
-        Key: { alertId },
-        UpdateExpression:
-          "SET #status = :status, workOrderId = :workOrderId, updatedAt = :updatedAt, updatedByRole = :role",
-        ExpressionAttributeNames: { "#status": "status" },
+        TableName: tables.incident,
+        Key: { incidentId },
+        UpdateExpression: "SET workOrderId = :workOrderId, updatedAt = :updatedAt, lastUpdatedAt = :lastUpdatedAt",
         ExpressionAttributeValues: {
-          ":status": "WORK_ORDER_CREATED",
           ":workOrderId": workOrderId,
           ":updatedAt": now,
-          ":role": actorRole
-        }
+          ":lastUpdatedAt": now,
+        },
       })
     );
 

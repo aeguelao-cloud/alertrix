@@ -2,6 +2,7 @@
 
 const { ok, badRequest, serverError } = require("../common/response");
 const { saveNotificationSettings } = require("../common/notificationSettings");
+const { sendSettingsChangeEmail } = require("../common/settingsChangeEmail");
 
 exports.handler = async (event) => {
   try {
@@ -36,7 +37,28 @@ exports.handler = async (event) => {
     }
 
     const saved = await saveNotificationSettings({ userId, role, partial });
-    return ok(saved);
+
+    let settingsChangeEmail = { delivered: false, reason: "Not attempted" };
+    try {
+      settingsChangeEmail = await sendSettingsChangeEmail({
+        toEmail: saved.notificationEmail,
+        userId: saved.userId,
+        role: saved.role,
+        changes: saved.changes,
+        changedAt: saved.updatedAt,
+      });
+    } catch (mailError) {
+      console.error("sendSettingsChangeEmail error", mailError);
+      settingsChangeEmail = {
+        delivered: false,
+        reason: "Email send failed",
+      };
+    }
+
+    return ok({
+      ...saved,
+      settingsChangeEmail,
+    });
   } catch (error) {
     console.error("updateNotificationSettings error", error);
     return serverError("Failed to update notification settings");

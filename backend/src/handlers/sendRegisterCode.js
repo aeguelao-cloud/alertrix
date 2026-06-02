@@ -51,7 +51,7 @@ exports.handler = async (event) => {
       })
     );
 
-    const emailResult = await sendVerificationEmail({ toEmail: email, code, name });
+    const emailResult = await sendVerificationEmail({ toEmail: email, code, name, purpose });
     return ok({
       message: "Verification code sent",
       emailResult,

@@ -15,6 +15,10 @@ build/
 # AWS SAM
 .aws-sam/
 backend/.aws-sam-build/
+backend/.aws-sam-build-*/
+backend/.aws-sam-in-source/
+backend/_live_stack_template.yaml
+backend/live_template_processed.json
 
 # Logs
 *.log
@@ -34,8 +38,12 @@ Thumbs.db
 # Local secrets
 backend/env.local.json
 arduino/DHT11WaterLevelPractice/mqtt_secrets.h
+alertrix-*-firebase-adminsdk-*.json
 
 # Local temp/build folders
 backend/.sam_build_new/
 tmp/
 tmp_logs/
+outputs/
+test-results/
+artifact-build-manifest.json

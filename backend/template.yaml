@@ -13,18 +13,41 @@ Parameters:
     Default: ""
     NoEcho: true
     Description: Base64-encoded Firebase service account JSON for safer CLI parameter passing.
+  FirebaseServiceAccountParamName:
+    Type: String
+    Default: /alertrix/firebase/service-account-b64
+    Description: SSM parameter name used by Lambda to load Firebase service account (base64).
   AlertFromEmail:
     Type: String
     Default: ""
     Description: Verified SES sender email used for registration verification codes.
   EmailCooldownSeconds:
     Type: Number
-    Default: 600
-    Description: Cooldown window in seconds for repeated alert emails of same sensor+zone+severity.
+    Default: 86400
+    Description: Cooldown window in seconds for repeated alert emails of same zone+severity.
+  AlertCooldownSeconds:
+    Type: Number
+    Default: 30
+    Description: Cooldown window in seconds for repeated alerts and push notifications of same zone+severity.
+  ThresholdConfigParam:
+    Type: String
+    Default: ""
+    Description: Optional SSM parameter name that stores threshold JSON.
+  EmergencyAgency:
+    Type: String
+    Default: ""
+    Description: Optional emergency agency display name.
+  OfflineWindowSeconds:
+    Type: Number
+    Default: 120
+    Description: Device considered offline if heartbeat exceeds this interval.
   IoTSensorTopic:
     Type: String
     Default: alertrix/sensors/ingest
     Description: MQTT topic consumed by AWS IoT Core rule for sensor ingest.
+
+Conditions:
+  HasFirebaseServiceAccountB64: !Not [!Equals [!Ref FirebaseServiceAccountJsonBase64, ""]]
 
 Globals:
   Function:
@@ -35,6 +58,8 @@ Globals:
       Variables:
         SENSOR_TABLE_NAME: !Ref SensorTable
         ALERT_TABLE_NAME: !Ref AlertTable
+        INCIDENT_TABLE_NAME: !Ref IncidentTable
+        SENSOR_EVENT_TABLE_NAME: !Ref SensorEventTable
         WORK_ORDER_TABLE_NAME: !Ref WorkOrderTable
         PUSH_TOKEN_TABLE_NAME: !Ref PushTokenTable
         SETTINGS_TABLE_NAME: !Ref SettingsTable
@@ -44,9 +69,16 @@ Globals:
         ADMIN_TABLE_NAME: !Ref AdminTable
         ALERT_CRITICAL_TOPIC_ARN: !Ref AlertCriticalTopic
         ALERT_WARNING_TOPIC_ARN: !Ref AlertWarningTopic
+        HEARTBEAT_TOPIC_ARN: !Ref HeartbeatTopic
         ALERT_FROM_EMAIL: !Ref AlertFromEmail
+        THRESHOLD_CONFIG_PARAM: !Ref ThresholdConfigParam
+        EMERGENCY_AGENCY: !Ref EmergencyAgency
         VERIFICATION_SES_REGION: ap-southeast-5
+        ALERT_COOLDOWN_SECONDS: !Ref AlertCooldownSeconds
         EMAIL_COOLDOWN_SECONDS: !Ref EmailCooldownSeconds
+        OFFLINE_WINDOW_SECONDS: !Ref OfflineWindowSeconds
+        INCIDENT_STATUS_UPDATED_AT_INDEX_NAME: StatusUpdatedAtIndex
+        INCIDENT_CORRELATION_STATUS_INDEX_NAME: CorrelationStatusIndex
 
 Resources:
   ApiGateway:
@@ -149,6 +181,24 @@ Resources:
         - DynamoDBReadPolicy:
             TableName: !Ref SensorTable
 
+  GetDashboardOverviewFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: src/handlers/getDashboardOverview.handler
+      CodeUri: ./
+      Events:
+        GetDashboardOverview:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /api/v1/dashboard/overview
+            Method: get
+      Policies:
+        - DynamoDBReadPolicy:
+            TableName: !Ref SensorTable
+        - DynamoDBReadPolicy:
+            TableName: !Ref IncidentTable
+
   GetAppBootstrapFunction:
     Type: AWS::Serverless::Function
     Properties:
@@ -165,13 +215,18 @@ Resources:
         - DynamoDBReadPolicy:
             TableName: !Ref SensorTable
         - DynamoDBReadPolicy:
-            TableName: !Ref AlertTable
+            TableName: !Ref IncidentTable
         - DynamoDBReadPolicy:
             TableName: !Ref WorkOrderTable
         - DynamoDBReadPolicy:
             TableName: !Ref UserProfileTable
         - DynamoDBReadPolicy:
             TableName: !Ref SettingsTable
+        - Statement:
+            - Effect: Allow
+              Action:
+                - ssm:GetParameter
+              Resource: "*"
 
   GetTrendsFunction:
     Type: AWS::Serverless::Function
@@ -203,7 +258,39 @@ Resources:
             Method: get
       Policies:
         - DynamoDBReadPolicy:
-            TableName: !Ref AlertTable
+            TableName: !Ref IncidentTable
+
+  GetActiveIncidentsFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: src/handlers/getActiveIncidents.handler
+      CodeUri: ./
+      Events:
+        GetActiveIncidents:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /api/v1/incidents/active
+            Method: get
+      Policies:
+        - DynamoDBReadPolicy:
+            TableName: !Ref IncidentTable
+
+  GetIncidentEventsFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: src/handlers/getIncidentEvents.handler
+      CodeUri: ./
+      Events:
+        GetIncidentEvents:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /api/v1/incidents/{incidentId}/events
+            Method: get
+      Policies:
+        - DynamoDBReadPolicy:
+            TableName: !Ref SensorEventTable
 
   GetWorkOrdersFunction:
     Type: AWS::Serverless::Function
@@ -235,7 +322,45 @@ Resources:
             Method: post
       Policies:
         - DynamoDBCrudPolicy:
-            TableName: !Ref AlertTable
+            TableName: !Ref IncidentTable
+        - DynamoDBCrudPolicy:
+            TableName: !Ref SettingsTable
+
+  AcknowledgeIncidentFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: src/handlers/acknowledgeIncident.handler
+      CodeUri: ./
+      Events:
+        AcknowledgeIncident:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /api/v1/incidents/{incidentId}/acknowledge
+            Method: post
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref IncidentTable
+        - DynamoDBCrudPolicy:
+            TableName: !Ref SettingsTable
+
+  ResolveIncidentFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: src/handlers/resolveIncident.handler
+      CodeUri: ./
+      Events:
+        ResolveIncident:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /api/v1/incidents/{incidentId}/resolve
+            Method: post
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref IncidentTable
+        - DynamoDBCrudPolicy:
+            TableName: !Ref SettingsTable
 
   CreateWorkOrderFunction:
     Type: AWS::Serverless::Function
@@ -253,7 +378,9 @@ Resources:
         - DynamoDBCrudPolicy:
             TableName: !Ref WorkOrderTable
         - DynamoDBCrudPolicy:
-            TableName: !Ref AlertTable
+            TableName: !Ref IncidentTable
+        - DynamoDBCrudPolicy:
+            TableName: !Ref SettingsTable
 
   RegisterPushTokenFunction:
     Type: AWS::Serverless::Function
@@ -346,6 +473,42 @@ Resources:
               Resource:
                 - !Ref AlertCriticalTopic
                 - !Ref AlertWarningTopic
+            - Effect: Allow
+              Action:
+                - ses:SendEmail
+              Resource: "*"
+
+  GetSystemSettingsFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: src/handlers/getSystemSettings.handler
+      CodeUri: ./
+      Events:
+        GetSystemSettings:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /api/settings/system
+            Method: get
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref SettingsTable
+
+  UpdateSystemSettingsFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: src/handlers/updateSystemSettings.handler
+      CodeUri: ./
+      Events:
+        UpdateSystemSettings:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /api/settings/system
+            Method: post
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref SettingsTable
 
   GetDeviceLocationFunction:
     Type: AWS::Serverless::Function
@@ -374,6 +537,40 @@ Resources:
           Properties:
             RestApiId: !Ref ApiGateway
             Path: /api/settings/device-location
+            Method: post
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref SettingsTable
+
+  GetAdminDevicesFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: src/handlers/getAdminDevices.handler
+      CodeUri: ./
+      Events:
+        GetAdminDevices:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /api/admin/devices
+            Method: get
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref SettingsTable
+        - DynamoDBReadPolicy:
+            TableName: !Ref SensorTable
+
+  MutateAdminDeviceFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: src/handlers/mutateAdminDevice.handler
+      CodeUri: ./
+      Events:
+        MutateAdminDevice:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /api/admin/devices
             Method: post
       Policies:
         - DynamoDBCrudPolicy:
@@ -466,7 +663,7 @@ Resources:
       CodeUri: ./
       Environment:
         Variables:
-          FIREBASE_SERVICE_ACCOUNT_JSON_B64: !Ref FirebaseServiceAccountJsonBase64
+          FIREBASE_SERVICE_ACCOUNT_PARAM: !Ref FirebaseServiceAccountParamName
       Events:
         IngestSensorData:
           Type: Api
@@ -485,6 +682,10 @@ Resources:
         - DynamoDBCrudPolicy:
             TableName: !Ref AlertTable
         - DynamoDBCrudPolicy:
+            TableName: !Ref IncidentTable
+        - DynamoDBCrudPolicy:
+            TableName: !Ref SensorEventTable
+        - DynamoDBCrudPolicy:
             TableName: !Ref PushTokenTable
         - DynamoDBCrudPolicy:
             TableName: !Ref SettingsTable
@@ -493,7 +694,24 @@ Resources:
         - Statement:
             - Effect: Allow
               Action:
+                - dynamodb:GetItem
+                - dynamodb:BatchGetItem
+                - dynamodb:Query
+                - dynamodb:Scan
+                - dynamodb:DescribeTable
+              Resource:
+                - !GetAtt UserProfileTable.Arn
+                - !Sub "arn:${AWS::Partition}:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${UserProfileTable}/index/*"
+        - Statement:
+            - Effect: Allow
+              Action:
                 - ses:SendEmail
+              Resource: "*"
+        - Statement:
+            - Effect: Allow
+              Action:
+                - ssm:GetParameter
+                - sns:Publish
               Resource: "*"
 
   SendTestAlertFunction:
@@ -503,7 +721,7 @@ Resources:
       CodeUri: ./
       Environment:
         Variables:
-          FIREBASE_SERVICE_ACCOUNT_JSON_B64: !Ref FirebaseServiceAccountJsonBase64
+          FIREBASE_SERVICE_ACCOUNT_PARAM: !Ref FirebaseServiceAccountParamName
       Events:
         SendTestAlert:
           Type: Api
@@ -514,6 +732,11 @@ Resources:
       Policies:
         - DynamoDBReadPolicy:
             TableName: !Ref PushTokenTable
+        - Statement:
+            - Effect: Allow
+              Action:
+                - ssm:GetParameter
+              Resource: "*"
 
   SensorTable:
     Type: AWS::DynamoDB::Table
@@ -542,6 +765,57 @@ Resources:
       KeySchema:
         - AttributeName: alertId
           KeyType: HASH
+
+  IncidentTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      TableName: alertrix-incidents-my
+      AttributeDefinitions:
+        - AttributeName: incidentId
+          AttributeType: S
+        - AttributeName: status
+          AttributeType: S
+        - AttributeName: statusUpdatedAt
+          AttributeType: S
+        - AttributeName: correlationKey
+          AttributeType: S
+      KeySchema:
+        - AttributeName: incidentId
+          KeyType: HASH
+      GlobalSecondaryIndexes:
+        - IndexName: StatusUpdatedAtIndex
+          KeySchema:
+            - AttributeName: status
+              KeyType: HASH
+            - AttributeName: statusUpdatedAt
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+        - IndexName: CorrelationStatusIndex
+          KeySchema:
+            - AttributeName: correlationKey
+              KeyType: HASH
+            - AttributeName: statusUpdatedAt
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+
+  SensorEventTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      TableName: alertrix-sensor-events-my
+      AttributeDefinitions:
+        - AttributeName: incidentId
+          AttributeType: S
+        - AttributeName: eventAt
+          AttributeType: S
+      KeySchema:
+        - AttributeName: incidentId
+          KeyType: HASH
+        - AttributeName: eventAt
+          KeyType: RANGE
 
   WorkOrderTable:
     Type: AWS::DynamoDB::Table
@@ -640,8 +914,25 @@ Resources:
     Properties:
       TopicName: alertrix-alert-warning-my
 
+  HeartbeatTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: alertrix-device-heartbeat-my
+
+  FirebaseServiceAccountParameter:
+    Type: AWS::SSM::Parameter
+    Condition: HasFirebaseServiceAccountB64
+    Properties:
+      Name: !Ref FirebaseServiceAccountParamName
+      Type: String
+      Value: !Ref FirebaseServiceAccountJsonBase64
+      Description: Base64-encoded Firebase service account JSON for FCM push initialization.
+
 Outputs:
   ApiBaseUrl:
     Description: API Gateway base URL
     Value: !Sub "https://${ApiGateway}.execute-api.${AWS::Region}.amazonaws.com/prod"
+  HeartbeatTopicArn:
+    Description: SNS topic for heartbeat events
+    Value: !Ref HeartbeatTopic
 

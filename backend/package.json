@@ -7,11 +7,14 @@
   "type": "commonjs",
   "scripts": {
     "lint": "echo \"add linter if needed\"",
-    "test": "echo \"add tests if needed\""
+    "test": "echo \"add tests if needed\"",
+    "migrate:alerts-to-incidents": "node scripts/migrate_alerts_to_incidents.js",
+    "preview:emails": "node scripts/preview_all_email_templates.js"
   },
   "dependencies": {
     "@aws-sdk/client-dynamodb": "^3.862.0",
     "@aws-sdk/client-sesv2": "^3.862.0",
+    "@aws-sdk/client-ssm": "^3.862.0",
     "@aws-sdk/client-sns": "^3.862.0",
     "@aws-sdk/lib-dynamodb": "^3.862.0",
     "firebase-admin": "^13.6.0"

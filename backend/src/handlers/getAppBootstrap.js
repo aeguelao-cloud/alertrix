@@ -6,8 +6,12 @@ const { ok, serverError } = require("../common/response");
 const { getNotificationSettings } = require("../common/notificationSettings");
 const { getDeviceLocation } = require("../common/deviceLocationSettings");
 const { isAdminRole } = require("../common/policy");
-
-const SENSOR_TYPES = ["waterLevel", "vibration", "temperature"];
+const { loadThresholdConfig } = require("../common/thresholds");
+const { getSystemSettings } = require("../common/systemSettings");
+const { getEmergencyAgency } = require("../common/runtimeConfig");
+const { ALERT_STATUS, normalizeAlertRecord } = require("../common/alertStatus");
+const { listIncidentsByStatuses } = require("../common/incidentStore");
+const { SENSOR_TYPES, buildDashboardOverview } = require("../common/dashboardOverview");
 
 exports.handler = async (event) => {
   try {
@@ -16,19 +20,27 @@ exports.handler = async (event) => {
     const userId = String(headers["x-user-id"] || headers["X-User-Id"] || "").trim();
     const isAdmin = isAdminRole(role);
 
-    const [latestReadings, alerts, workOrders, notificationSettings, deviceLocation] = await Promise.all([
+    const [latestReadings, alerts, workOrders, notificationSettings, deviceLocation, thresholdConfig, systemSettings] = await Promise.all([
       loadLatestReadings(),
-      loadAlerts(),
+      loadIncidents(),
       loadWorkOrders(),
       getNotificationSettings({ userId, role }),
       getDeviceLocation(),
+      loadThresholdConfig(),
+      getSystemSettings(),
     ]);
+    const dashboardOverview = buildDashboardOverview({
+      latestReadings,
+      alerts,
+      now: new Date(),
+    });
 
     const response = {
       navigation: buildNavigation(isAdmin),
-      responseOverview: buildOverview(latestReadings, alerts),
+      responseOverview: buildOverview(latestReadings, alerts, dashboardOverview),
       incidentQueue: buildIncidentQueue(alerts),
-      responseSettings: buildSettings(notificationSettings, deviceLocation, role, isAdmin),
+      responseSettings: buildSettings(notificationSettings, deviceLocation, role, isAdmin, thresholdConfig, systemSettings),
+      dashboardOverview,
       generatedAt: new Date().toISOString(),
     };
 
@@ -69,13 +81,11 @@ async function loadLatestReadings() {
   return results.filter(Boolean);
 }
 
-async function loadAlerts() {
-  const result = await docClient.send(
-    new ScanCommand({
-      TableName: tables.alert,
-    })
+async function loadIncidents() {
+  return listIncidentsByStatuses(
+    [ALERT_STATUS.ACTIVE, ALERT_STATUS.ACKNOWLEDGED, ALERT_STATUS.RESOLVED, ALERT_STATUS.CLOSED],
+    { limitPerStatus: 500 }
   );
-  return result.Items || [];
 }
 
 async function loadWorkOrders() {
@@ -93,25 +103,19 @@ function buildNavigation(isAdmin) {
   return items;
 }
 
-function buildOverview(readings, alerts) {
-  const activeAlerts = alerts.filter((a) => String(a.status || "").toUpperCase() === "ACTIVE");
-  const critical = activeAlerts.filter((a) => String(a.severity || "").toUpperCase() === "CRITICAL");
-  const warning = activeAlerts.filter((a) => String(a.severity || "").toUpperCase() === "WARNING");
+function buildOverview(readings, alerts, dashboardOverview) {
+  const activeAlerts = alerts
+    .map((a) => normalizeAlertRecord(a))
+    .filter((a) => a.status === ALERT_STATUS.ACTIVE || a.status === ALERT_STATUS.ACKNOWLEDGED);
   const sortedAlerts = activeAlerts.slice().sort((a, b) => String(a.detectedAt || "") < String(b.detectedAt || "") ? 1 : -1);
   const latestIncident = sortedAlerts[0] || null;
 
-  const latestSync = readings
-    .map((r) => r.capturedAt)
-    .filter(Boolean)
-    .sort()
-    .reverse()[0] || new Date().toISOString();
-
   return {
     summary: {
-      currentRisk: critical.length > 0 ? "Critical" : warning.length > 0 ? "Warning" : "Stable",
-      openAlerts: activeAlerts.length,
-      siteHealth: critical.length > 0 ? "Degraded" : "Healthy",
-      latestSync,
+      currentRisk: dashboardOverview.currentRisk,
+      openAlerts: dashboardOverview.activeIncidents,
+      siteHealth: dashboardOverview.systemStatus,
+      latestSync: dashboardOverview.latestReadingAt || new Date().toISOString(),
     },
     highestPriorityIncident: latestIncident,
     fieldDeviceOverview: readings,
@@ -121,7 +125,8 @@ function buildOverview(readings, alerts) {
 
 function buildIncidentQueue(alerts) {
   const now = Date.now();
-  const resolvedToday = alerts.filter((a) => {
+  const normalized = alerts.map((a) => normalizeAlertRecord(a));
+  const resolvedToday = normalized.filter((a) => {
     const status = String(a.status || "").toUpperCase();
     if (status !== "RESOLVED") return false;
     const ts = Date.parse(a.updatedAt || a.detectedAt || "");
@@ -129,7 +134,9 @@ function buildIncidentQueue(alerts) {
     return now - ts <= 24 * 60 * 60 * 1000;
   }).length;
 
-  const open = alerts.filter((a) => String(a.status || "").toUpperCase() === "ACTIVE");
+  const open = normalized.filter(
+    (a) => a.status === ALERT_STATUS.ACTIVE || a.status === ALERT_STATUS.ACKNOWLEDGED
+  );
   return {
     stats: {
       openIncidents: open.length,
@@ -141,24 +148,20 @@ function buildIncidentQueue(alerts) {
   };
 }
 
-function buildSettings(notificationSettings, deviceLocation, role, isAdmin) {
+function buildSettings(notificationSettings, deviceLocation, role, isAdmin, thresholdConfig, systemSettings) {
   return {
     systemPolicy: {
-      autoRefreshInterval: "30s",
-      defaultTrendWindow: "24H",
-      dashboardRefreshMode: "Cloud Sync",
+      autoRefreshInterval: `${systemSettings.autoRefreshIntervalSeconds}s`,
+      defaultTrendWindow: systemSettings.defaultTrendWindow,
+      dashboardRefreshMode: systemSettings.dashboardRefreshMode,
     },
-    alertThresholds: {
-      waterLevel: { warning: 70, critical: 85, unit: "%" },
-      vibration: { warning: 2.8, critical: 4.0, unit: "mm/s RMS" },
-      temperature: { warning: 35, critical: 40, unit: "degC" },
-      thresholdAudit: "Enabled",
-    },
+    alertThresholds: { ...thresholdConfig, thresholdAudit: "Enabled" },
     notificationSettings,
     siteAndUser: {
-      siteName: "Pilot Monitoring Site",
+      siteName: systemSettings.siteName,
       currentRole: role || "User",
       deviceLocation: deviceLocation.location,
+      emergencyAgency: getEmergencyAgency() || "Not configured",
     },
     permissions: {
       canManageThresholds: isAdmin,

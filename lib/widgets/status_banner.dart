@@ -33,7 +33,7 @@ class StatusBanner extends StatelessWidget {
           ),
           const SizedBox(height: 6),
           Text(
-            '$activeAlertCount Active Alerts',
+            '$activeAlertCount Active Incidents',
             style: const TextStyle(
               color: Color(0xFFFFE08A),
               fontWeight: FontWeight.w700,

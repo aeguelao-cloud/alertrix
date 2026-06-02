@@ -3,6 +3,7 @@
 const { GetCommand, PutCommand } = require("@aws-sdk/lib-dynamodb");
 const { SNSClient, SubscribeCommand, UnsubscribeCommand } = require("@aws-sdk/client-sns");
 const { docClient, tables } = require("./dynamo");
+const { getAlertCriticalTopicArn, getAlertWarningTopicArn } = require("./runtimeConfig");
 
 const sns = new SNSClient({});
 
@@ -36,6 +37,11 @@ async function getNotificationSettings({ userId, role }) {
 
 async function saveNotificationSettings({ userId, role, partial }) {
   const current = await getNotificationSettings({ userId, role });
+  const currentNormalized = {
+    pushRule: normalizePushRule(current.pushRule),
+    alertSoundEnabled: Boolean(current.alertSoundEnabled),
+    notificationEmail: String(current.notificationEmail || "").trim(),
+  };
   const next = {
     ...current,
     ...partial,
@@ -46,34 +52,52 @@ async function saveNotificationSettings({ userId, role, partial }) {
     alertSoundEnabled: Boolean(next.alertSoundEnabled),
     notificationEmail: String(next.notificationEmail || "").trim(),
   };
+  const changes = buildSettingsChanges(currentNormalized, normalized);
+  const updatedAt = new Date().toISOString();
+  if (changes.length === 0) {
+    return {
+      ...normalized,
+      emailSubscriptionStatus: current.emailSubscriptionStatus || "Not configured",
+      userId: current.userId,
+      role: current.role,
+      updatedAt,
+      changes,
+      changed: false,
+    };
+  }
 
-  const previousEmail = String(current.notificationEmail || "").trim();
-  const previousRule = normalizePushRule(current.pushRule);
+  const previousEmail = currentNormalized.notificationEmail;
+  const previousRule = currentNormalized.pushRule;
+  const emailOrRuleChanged =
+    previousEmail !== normalized.notificationEmail || previousRule !== normalized.pushRule;
 
   const topicArns = getTopicArns();
   const needsCritical = normalized.notificationEmail.length > 0 && normalized.pushRule !== "Disabled";
   const needsWarning = normalized.notificationEmail.length > 0 && normalized.pushRule === "Warning + Critical";
 
-  let criticalArn = null;
-  let warningArn = null;
-  let status = normalized.notificationEmail.length > 0 ? "Pending confirmation" : "Not configured";
+  let criticalArn = current.criticalTopicSubscriptionArn || null;
+  let warningArn = current.warningTopicSubscriptionArn || null;
+  let status = current.emailSubscriptionStatus || "Not configured";
 
-  // Re-subscribe when email/rule changed.
-  if (topicArns.critical && needsCritical) {
-    criticalArn = await subscribeEmail(topicArns.critical, normalized.notificationEmail);
-  }
-  if (topicArns.warning && needsWarning) {
-    warningArn = await subscribeEmail(topicArns.warning, normalized.notificationEmail);
-  }
-
-  if (criticalArn && criticalArn !== "pending confirmation") {
-    status = "Subscribed";
-  }
-
-  // Best-effort cleanup for old subscriptions when email/rule changed.
-  if (previousEmail && (previousEmail !== normalized.notificationEmail || previousRule !== normalized.pushRule)) {
+  if (emailOrRuleChanged) {
+    // Best-effort cleanup for old subscriptions when email/rule changed.
     await unsubscribeIfArn(current.criticalTopicSubscriptionArn);
     await unsubscribeIfArn(current.warningTopicSubscriptionArn);
+
+    criticalArn = null;
+    warningArn = null;
+    status = normalized.notificationEmail.length > 0 ? "Pending confirmation" : "Not configured";
+
+    if (topicArns.critical && needsCritical) {
+      criticalArn = await subscribeEmail(topicArns.critical, normalized.notificationEmail);
+    }
+    if (topicArns.warning && needsWarning) {
+      warningArn = await subscribeEmail(topicArns.warning, normalized.notificationEmail);
+    }
+
+    if (criticalArn && criticalArn !== "pending confirmation") {
+      status = "Subscribed";
+    }
   }
 
   await docClient.send(
@@ -88,7 +112,7 @@ async function saveNotificationSettings({ userId, role, partial }) {
         criticalTopicSubscriptionArn: criticalArn,
         warningTopicSubscriptionArn: warningArn,
         emailSubscriptionStatus: status,
-        updatedAt: new Date().toISOString(),
+        updatedAt,
       },
     })
   );
@@ -98,6 +122,9 @@ async function saveNotificationSettings({ userId, role, partial }) {
     emailSubscriptionStatus: status,
     userId: current.userId,
     role: current.role,
+    updatedAt,
+    changes,
+    changed: true,
   };
 }
 
@@ -122,10 +149,36 @@ function normalizeUserId(userId, role) {
   return String(role || "User").toLowerCase() === "admin" ? "admin" : "user";
 }
 
+function buildSettingsChanges(current, next) {
+  const changes = [];
+  if (current.pushRule !== next.pushRule) {
+    changes.push({
+      field: "pushRule",
+      from: current.pushRule,
+      to: next.pushRule,
+    });
+  }
+  if (current.alertSoundEnabled !== next.alertSoundEnabled) {
+    changes.push({
+      field: "alertSoundEnabled",
+      from: current.alertSoundEnabled,
+      to: next.alertSoundEnabled,
+    });
+  }
+  if (current.notificationEmail !== next.notificationEmail) {
+    changes.push({
+      field: "notificationEmail",
+      from: current.notificationEmail,
+      to: next.notificationEmail,
+    });
+  }
+  return changes;
+}
+
 function getTopicArns() {
   return {
-    critical: process.env.ALERT_CRITICAL_TOPIC_ARN || "",
-    warning: process.env.ALERT_WARNING_TOPIC_ARN || "",
+    critical: getAlertCriticalTopicArn(),
+    warning: getAlertWarningTopicArn(),
   };
 }
 

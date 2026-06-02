@@ -37,6 +37,15 @@ class _WorkOrdersPageState extends State<WorkOrdersPage> {
   Widget build(BuildContext context) {
     final compact = uiIsCompactLayout(context);
     final sectionSpace = uiSectionSpacing(context);
+    final openCount =
+        _items.where((item) => item.status.toUpperCase() == 'OPEN').length;
+    final closedCount =
+        _items.where((item) => item.status.toUpperCase() == 'CLOSED').length;
+    final criticalCount = _items
+        .where((item) =>
+            _normalizeSeverity(item.alertInfo?.severity).toLowerCase() ==
+            'critical')
+        .length;
     return ListView(
       padding: uiPagePadding(context),
       children: [
@@ -46,24 +55,32 @@ class _WorkOrdersPageState extends State<WorkOrdersPage> {
           subtitle: 'Track escalated incidents and field response status.',
         ),
         SizedBox(height: sectionSpace),
+        _WorkOrderOpsBanner(
+          totalCount: _items.length,
+          openCount: openCount,
+          closedCount: closedCount,
+          criticalCount: criticalCount,
+          loading: _loading,
+          hasError: _error != null,
+        ),
+        SizedBox(height: sectionSpace),
         UiCard(
           child: LayoutBuilder(
             builder: (context, constraints) {
-              final stacked = constraints.maxWidth < 920;
-              final searchField = Expanded(
-                child: SizedBox(
-                  height: 52,
-                  child: TextField(
-                    controller: _alertIdController,
-                    decoration: const InputDecoration(
-                      hintText: 'Search by Alert ID (e.g. ALERT-1774450055956)',
-                    ),
-                    onSubmitted: (_) => _load(),
+              final stacked =
+                  uiIsCompactLayout(context) || constraints.maxWidth < 920;
+              final searchInput = SizedBox(
+                height: 52,
+                child: TextField(
+                  controller: _alertIdController,
+                  decoration: const InputDecoration(
+                    hintText: 'Search by Alert ID (e.g. ALERT-1774450055956)',
                   ),
+                  onSubmitted: (_) => _load(),
                 ),
               );
               final statusFilter = DropdownButtonFormField<String>(
-                value: _statusFilter,
+                initialValue: _statusFilter,
                 items: const [
                   DropdownMenuItem(value: 'ALL', child: Text('All status')),
                   DropdownMenuItem(value: 'OPEN', child: Text('Open')),
@@ -88,10 +105,10 @@ class _WorkOrdersPageState extends State<WorkOrdersPage> {
                 return Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    searchField,
-                    const SizedBox(height: 12),
+                    searchInput,
+                    const SizedBox(height: UiSpace.gap),
                     statusFilter,
-                    const SizedBox(height: 12),
+                    const SizedBox(height: UiSpace.gap),
                     searchBtn,
                   ],
                 );
@@ -99,10 +116,10 @@ class _WorkOrdersPageState extends State<WorkOrdersPage> {
 
               return Row(
                 children: [
-                  searchField,
-                  const SizedBox(width: 12),
+                  Expanded(child: searchInput),
+                  const SizedBox(width: UiSpace.gap),
                   SizedBox(width: 180, child: statusFilter),
-                  const SizedBox(width: 12),
+                  const SizedBox(width: UiSpace.gap),
                   SizedBox(width: 120, child: searchBtn),
                 ],
               );
@@ -110,7 +127,7 @@ class _WorkOrdersPageState extends State<WorkOrdersPage> {
           ),
         ),
         if (_error != null) ...[
-          const SizedBox(height: 12),
+          const SizedBox(height: UiSpace.gap),
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
             decoration: BoxDecoration(
@@ -121,20 +138,20 @@ class _WorkOrdersPageState extends State<WorkOrdersPage> {
           ),
         ],
         if (_loading) ...[
-          const SizedBox(height: 12),
+          const SizedBox(height: UiSpace.gap),
           const LinearProgressIndicator(),
         ],
         SizedBox(height: sectionSpace),
         Text('Work Orders (${_items.length})', style: UiText.sectionTitle),
-        const SizedBox(height: 12),
+        const SizedBox(height: UiSpace.gap),
         UiCard(
           big: true,
           child: _items.isEmpty && !_loading
               ? UiEmptyState(
                   icon: Icons.assignment_late_outlined,
-                  title: 'No work orders found',
+                  title: 'No escalated incidents yet.',
                   subtitle:
-                      'Work orders will appear here when incidents are escalated',
+                      'When an alert is escalated from the Incident Queue, a work order will be created here for field response tracking.',
                   primaryAction: OutlinedButton(
                     onPressed: () {
                       _alertIdController.clear();
@@ -188,7 +205,7 @@ class _WorkOrdersPageState extends State<WorkOrdersPage> {
                                       Text('Action', style: UiText.cardTitle)),
                             ],
                           ),
-                          const SizedBox(height: 10),
+                          const SizedBox(height: UiSpace.gap),
                           ..._items
                               .map((item) => _buildDesktopWorkOrderRow(item)),
                         ],
@@ -261,7 +278,7 @@ class _WorkOrdersPageState extends State<WorkOrdersPage> {
           child: Align(
             alignment: Alignment.centerLeft,
             child: TextButton(
-              onPressed: () {},
+              onPressed: () => _showWorkOrderDetail(item),
               style: uiLinkButton(),
               child: const Text('Open'),
             ),
@@ -319,10 +336,54 @@ class _WorkOrdersPageState extends State<WorkOrdersPage> {
           Align(
             alignment: Alignment.centerRight,
             child: TextButton(
-              onPressed: () {},
+              onPressed: () => _showWorkOrderDetail(item),
               style: uiLinkButton(),
               child: const Text('Open'),
             ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _showWorkOrderDetail(_WorkOrderItem item) async {
+    final issueTitle = item.alertInfo?.title ?? 'No linked alert detail';
+    final severityText = _normalizeSeverity(item.alertInfo?.severity);
+    final zoneText = item.alertInfo?.zone ?? '--';
+    final triggerText = item.alertInfo?.triggerValue ?? '--';
+    final timeText = item.alertInfo?.detectedAt ?? '--';
+    final priority = _priorityLabel(item, severityText);
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text('Work Order ${item.workOrderId}'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(issueTitle, style: UiText.cardTitle),
+            const SizedBox(height: 8),
+            Text('Alert ID: ${item.alertId}', style: UiText.body),
+            const SizedBox(height: 4),
+            Text('Status: ${_statusLabel(item.status)}', style: UiText.body),
+            const SizedBox(height: 4),
+            Text('Priority: $priority', style: UiText.body),
+            const SizedBox(height: 4),
+            Text('Severity: $severityText', style: UiText.body),
+            const SizedBox(height: 4),
+            Text('Zone: $zoneText', style: UiText.body),
+            const SizedBox(height: 4),
+            Text('Trigger: $triggerText', style: UiText.body),
+            const SizedBox(height: 4),
+            Text('Detected At: $timeText', style: UiText.body),
+            const SizedBox(height: 4),
+            Text('Updated At: ${item.createdAt}', style: UiText.body),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(),
+            child: const Text('Close'),
           ),
         ],
       ),
@@ -449,6 +510,92 @@ class _WorkOrdersPageState extends State<WorkOrdersPage> {
 
   static String _statusLabel(String status) {
     return status.toUpperCase() == 'OPEN' ? 'Open' : 'Closed';
+  }
+}
+
+class _WorkOrderOpsBanner extends StatelessWidget {
+  const _WorkOrderOpsBanner({
+    required this.totalCount,
+    required this.openCount,
+    required this.closedCount,
+    required this.criticalCount,
+    required this.loading,
+    required this.hasError,
+  });
+
+  final int totalCount;
+  final int openCount;
+  final int closedCount;
+  final int criticalCount;
+  final bool loading;
+  final bool hasError;
+
+  @override
+  Widget build(BuildContext context) {
+    final tone = hasError
+        ? UiBadgeTone.warning
+        : (criticalCount > 0
+            ? UiBadgeTone.critical
+            : (openCount > 0 ? UiBadgeTone.warning : UiBadgeTone.healthy));
+    final bg = switch (tone) {
+      UiBadgeTone.critical => const Color(0xFFFFECEC),
+      UiBadgeTone.warning => const Color(0xFFFFF5E6),
+      _ => const Color(0xFFEAF7EF),
+    };
+    final border = switch (tone) {
+      UiBadgeTone.critical => const Color(0xFFF3B0B0),
+      UiBadgeTone.warning => const Color(0xFFF2D094),
+      _ => const Color(0xFFB8DFC4),
+    };
+    final icon = hasError
+        ? Icons.sync_problem_rounded
+        : (criticalCount > 0
+            ? Icons.assignment_late_rounded
+            : (openCount > 0
+                ? Icons.assignment_ind_rounded
+                : Icons.assignment_turned_in_rounded));
+    final title = hasError
+        ? 'Work order sync degraded'
+        : (criticalCount > 0
+            ? 'Critical work orders require field action'
+            : (openCount > 0
+                ? 'Open work orders pending execution'
+                : 'Work order queue stable'));
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      decoration: BoxDecoration(
+        color: bg,
+        borderRadius: BorderRadius.circular(UiRadius.card),
+        border: Border.all(color: border),
+      ),
+      child: Row(
+        children: [
+          Icon(
+            icon,
+            color: tone == UiBadgeTone.critical
+                ? UiColors.danger
+                : (tone == UiBadgeTone.warning
+                    ? UiColors.warning
+                    : UiColors.healthy),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(title, style: UiText.cardTitle),
+                const SizedBox(height: 2),
+                Text(
+                  'Total: $totalCount | Open: $openCount | Closed: $closedCount | Critical: $criticalCount${loading ? ' | Syncing...' : ''}',
+                  style: UiText.helper,
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
   }
 }
 

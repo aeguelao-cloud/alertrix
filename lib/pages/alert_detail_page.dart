@@ -41,7 +41,7 @@ String formatSensorValue(double value, SensorType type) {
     case SensorType.vibration:
       return '${value.toStringAsFixed(1)} mm/s RMS';
     case SensorType.temperature:
-      return '${value.toStringAsFixed(1)}°C';
+      return '${value.toStringAsFixed(1)}deg C';
   }
 }
 
@@ -79,27 +79,34 @@ class AlertDetailPage extends StatefulWidget {
     required this.alert,
     required this.role,
     this.onConfirm,
+    this.onResolve,
     this.onIgnore,
     this.onCreateWorkOrder,
     this.onSilenceBuzzer,
+    this.onLoadIncidentEvents,
   });
 
   final AlertEvent alert;
   final UserRole role;
   final Future<void> Function()? onConfirm;
+  final Future<void> Function()? onResolve;
   final Future<void> Function()? onIgnore;
   final Future<String> Function()? onCreateWorkOrder;
   final Future<void> Function()? onSilenceBuzzer;
+  final Future<List<IncidentSensorEvent>> Function()? onLoadIncidentEvents;
 
   @override
   State<AlertDetailPage> createState() => _AlertDetailPageState();
 }
 
 class _AlertDetailPageState extends State<AlertDetailPage> {
-  AlertHandlingStatus _status = AlertHandlingStatus.active;
+  late AlertHandlingStatus _status;
   String? _workOrderId;
   String? _silenceDebugMessage;
   bool _busy = false;
+  bool _eventLoading = false;
+  String? _eventError;
+  List<IncidentSensorEvent> _events = const <IncidentSensorEvent>[];
 
   bool get _isAdmin => widget.role == UserRole.admin;
 
@@ -129,12 +136,19 @@ class _AlertDetailPageState extends State<AlertDetailPage> {
   }
 
   @override
+  void initState() {
+    super.initState();
+    _status = _mapIncidentStatus(widget.alert.status);
+    _loadIncidentEvents();
+  }
+
+  @override
   Widget build(BuildContext context) {
     final severityColor = widget.alert.severity.color;
     final severityLabel = widget.alert.severity.label;
 
     return Scaffold(
-      appBar: AppBar(title: const Text('Alert Detail')),
+      appBar: AppBar(title: const Text('Incident Detail')),
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [
@@ -148,7 +162,7 @@ class _AlertDetailPageState extends State<AlertDetailPage> {
                       width: 38,
                       height: 38,
                       decoration: BoxDecoration(
-                        color: severityColor.withOpacity(0.14),
+                        color: severityColor.withValues(alpha: 0.14),
                         borderRadius: BorderRadius.circular(10),
                       ),
                       child: Icon(Icons.warning_amber_rounded,
@@ -162,7 +176,7 @@ class _AlertDetailPageState extends State<AlertDetailPage> {
                             fontWeight: FontWeight.w800, fontSize: 19),
                       ),
                     ),
-                    _chip(severityLabel, severityColor.withOpacity(0.14),
+                    _chip(severityLabel, severityColor.withValues(alpha: 0.14),
                         severityColor),
                     const SizedBox(width: 6),
                     _chip(_status.label, const Color(0xFFEAF3F5),
@@ -195,6 +209,8 @@ class _AlertDetailPageState extends State<AlertDetailPage> {
                     runSpacing: 8,
                     children: [
                       _kv('Current value', _currentValueText),
+                      _kv('Warning threshold',
+                          formatSensorValue(_warning, _metric)),
                       _kv('Critical threshold',
                           formatSensorValue(_critical, _metric)),
                       _kv(
@@ -239,12 +255,25 @@ class _AlertDetailPageState extends State<AlertDetailPage> {
                   width: double.infinity,
                   child: FilledButton.icon(
                     onPressed: (_busy ||
+                            _status == AlertHandlingStatus.acknowledged ||
                             _status == AlertHandlingStatus.falseAlarm ||
                             _status == AlertHandlingStatus.resolved)
                         ? null
                         : _acknowledge,
                     icon: const Icon(Icons.check_circle_outline),
-                    label: const Text('Acknowledge'),
+                    label: const Text('Acknowledge Incident'),
+                  ),
+                ),
+                const SizedBox(height: 8),
+                SizedBox(
+                  width: double.infinity,
+                  child: OutlinedButton.icon(
+                    onPressed:
+                        (_busy || _status != AlertHandlingStatus.acknowledged)
+                            ? null
+                            : _markResolved,
+                    icon: const Icon(Icons.task_alt_rounded),
+                    label: const Text('Resolve Incident'),
                   ),
                 ),
                 const SizedBox(height: 8),
@@ -288,11 +317,6 @@ class _AlertDetailPageState extends State<AlertDetailPage> {
                           style: TextStyle(color: Color(0xFFC93C3C))),
                     ),
                   ),
-                  const SizedBox(height: 8),
-                  TextButton(
-                    onPressed: _busy ? null : _markResolved,
-                    child: const Text('Resolve'),
-                  ),
                 ],
                 if (_busy) ...[
                   const SizedBox(height: 8),
@@ -306,22 +330,38 @@ class _AlertDetailPageState extends State<AlertDetailPage> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Text('Audit Timeline',
+                const Text('Sensor Event History',
                     style:
                         TextStyle(fontWeight: FontWeight.w800, fontSize: 16)),
+                const SizedBox(height: 6),
+                const Text(
+                  'Raw threshold-trigger events linked to this incident.',
+                  style: TextStyle(color: Color(0xFF5F727A), fontSize: 12),
+                ),
                 const SizedBox(height: 8),
-                _timeline('Triggered', formatDateTime(widget.alert.timestamp)),
-                _timeline(
-                    'Notification sent',
-                    formatDateTime(widget.alert.timestamp
-                        .add(const Duration(seconds: 8)))),
-                _timeline('Viewed', formatDateTime(DateTime.now())),
-                if (_status != AlertHandlingStatus.active)
-                  _timeline(_status.label, formatDateTime(DateTime.now())),
-                if (_workOrderId != null)
-                  _timeline(
-                      'Work order created', formatDateTime(DateTime.now())),
-                const SizedBox(height: 8),
+                if (_eventLoading) const LinearProgressIndicator(minHeight: 2),
+                if (_eventError != null) ...[
+                  const SizedBox(height: 8),
+                  Text(
+                    _eventError!,
+                    style: const TextStyle(
+                      color: Color(0xFFC93C3C),
+                      fontSize: 12,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ],
+                if (!_eventLoading && _events.isEmpty) ...[
+                  const SizedBox(height: 8),
+                  const Text(
+                    'No raw events available for this incident yet.',
+                    style: TextStyle(color: Color(0xFF5F727A)),
+                  ),
+                ] else ...[
+                  const SizedBox(height: 8),
+                  ..._events.take(120).map(_eventRow),
+                ],
+                const SizedBox(height: 10),
                 const Divider(height: 1),
                 const SizedBox(height: 8),
                 Text(
@@ -337,16 +377,77 @@ class _AlertDetailPageState extends State<AlertDetailPage> {
     );
   }
 
-  Widget _timeline(String event, String time) {
+  Future<void> _loadIncidentEvents() async {
+    final loader = widget.onLoadIncidentEvents;
+    if (loader == null) return;
+    setState(() {
+      _eventLoading = true;
+      _eventError = null;
+    });
+    try {
+      final items = await loader();
+      if (!mounted) return;
+      setState(() {
+        _events = items;
+      });
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _eventError = '$error'.replaceFirst('Exception: ', '');
+      });
+    } finally {
+      if (mounted) {
+        setState(() => _eventLoading = false);
+      }
+    }
+  }
+
+  Widget _eventRow(IncidentSensorEvent event) {
+    final toneColor = event.severity == SensorLevel.critical
+        ? const Color(0xFFC93C3C)
+        : (event.severity == SensorLevel.warning
+            ? const Color(0xFFE09D25)
+            : const Color(0xFF2F8F46));
+    final primary = event.measuredValue ?? '--';
+    final meta = [
+      if (event.zone != null && event.zone!.trim().isNotEmpty) event.zone!,
+      if (event.deviceId != null && event.deviceId!.trim().isNotEmpty)
+        event.deviceId!,
+      if (event.ingestTransport != null &&
+          event.ingestTransport!.trim().isNotEmpty)
+        event.ingestTransport!,
+    ].join(' | ');
+
     return Padding(
       padding: const EdgeInsets.only(bottom: 6),
       child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Icon(Icons.circle, size: 8, color: Color(0xFF0A7E8C)),
+          Icon(Icons.circle, size: 8, color: toneColor),
           const SizedBox(width: 8),
-          Expanded(child: Text(event)),
-          Text(time,
-              style: const TextStyle(color: Color(0xFF5F727A), fontSize: 12)),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  '${event.severity.label} | $primary',
+                  style: const TextStyle(fontWeight: FontWeight.w700),
+                ),
+                if (meta.isNotEmpty)
+                  Text(
+                    meta,
+                    style: const TextStyle(
+                      color: Color(0xFF5F727A),
+                      fontSize: 12,
+                    ),
+                  ),
+              ],
+            ),
+          ),
+          Text(
+            formatDateTime(event.capturedAt),
+            style: const TextStyle(color: Color(0xFF5F727A), fontSize: 12),
+          ),
         ],
       ),
     );
@@ -405,7 +506,7 @@ class _AlertDetailPageState extends State<AlertDetailPage> {
         await widget.onConfirm!();
       }
       setState(() => _status = AlertHandlingStatus.acknowledged);
-      _toast('Alert acknowledged.');
+      _toast('Incident acknowledged.');
     });
   }
 
@@ -485,8 +586,11 @@ class _AlertDetailPageState extends State<AlertDetailPage> {
 
   Future<void> _markResolved() async {
     await _runAction(() async {
+      if (widget.onResolve != null) {
+        await widget.onResolve!();
+      }
       setState(() => _status = AlertHandlingStatus.resolved);
-      _toast('Alert resolved.');
+      _toast('Incident resolved.');
     });
   }
 
@@ -517,6 +621,15 @@ class _AlertDetailPageState extends State<AlertDetailPage> {
 
   void _toast(String msg) {
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
+  }
+
+  AlertHandlingStatus _mapIncidentStatus(IncidentStatus status) {
+    return switch (status) {
+      IncidentStatus.active => AlertHandlingStatus.active,
+      IncidentStatus.acknowledged => AlertHandlingStatus.acknowledged,
+      IncidentStatus.resolved => AlertHandlingStatus.resolved,
+      IncidentStatus.closed => AlertHandlingStatus.falseAlarm,
+    };
   }
 }
 

@@ -85,7 +85,7 @@ class PushNotificationService {
       if (!userInitiated &&
           (permission == 'default' || permission == 'unknown')) {
         _lastErrorMessage =
-            'FCM waiting for user action: click bell icon to enable notifications';
+            'FCM waiting for user action: allow browser notifications';
         _lastFailureRetryable = false;
         return null;
       }

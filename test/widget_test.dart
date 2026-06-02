@@ -6,7 +6,7 @@ void main() {
   testWidgets('login page renders', (WidgetTester tester) async {
     await tester.pumpWidget(const AlertrixApp());
 
-    expect(find.text('Alertrix Login'), findsOneWidget);
-    expect(find.text('Enter Dashboard'), findsOneWidget);
+    expect(find.text('Create account'), findsWidgets);
+    expect(find.text('Sign in'), findsWidgets);
   });
 }

@@ -1,56 +1,48 @@
-﻿"use strict";
+"use strict";
 
-const { GetCommand, UpdateCommand } = require("@aws-sdk/lib-dynamodb");
-const { docClient, tables } = require("../common/dynamo");
 const { allowedStatus, roleCanIgnore } = require("../common/policy");
+const { ALERT_STATUS, normalizeAlertStatus } = require("../common/alertStatus");
+const { updateIncidentStatus } = require("../common/incidentStore");
 const { ok, badRequest, forbidden, notFound, serverError } = require("../common/response");
+
+const LEGACY_STATUS_INPUTS = new Set(["OPEN", "CONFIRMED", "IGNORED", "WORK_ORDER_CREATED"]);
 
 exports.handler = async (event) => {
   try {
-    const alertId = event.pathParameters?.alertId;
-    if (!alertId) {
+    const incidentId = event.pathParameters?.alertId;
+    if (!incidentId) {
       return badRequest("Missing path parameter: alertId");
     }
 
     const body = JSON.parse(event.body || "{}");
-    const status = body.status;
+    const rawStatus = String(body.status || "").trim().toUpperCase();
     const actorRole = body.actorRole || "Operator";
 
-    if (!allowedStatus.includes(status)) {
+    if (!rawStatus) {
+      return badRequest("Missing status");
+    }
+    if (!allowedStatus.includes(rawStatus) && !LEGACY_STATUS_INPUTS.has(rawStatus)) {
       return badRequest("Invalid status");
     }
 
-    if (status === "IGNORED" && !roleCanIgnore(actorRole)) {
-      return forbidden("Only Admin can ignore alerts");
+    const status = normalizeAlertStatus(rawStatus, ALERT_STATUS.ACTIVE);
+    if (status === ALERT_STATUS.CLOSED && !roleCanIgnore(actorRole)) {
+      return forbidden("Only Admin can close alerts as false alarms");
     }
 
-    const existing = await docClient.send(
-      new GetCommand({
-        TableName: tables.alert,
-        Key: { alertId }
-      })
-    );
+    const updated = await updateIncidentStatus({
+      incidentId,
+      status,
+      actorRole,
+    });
+    if (!updated) return notFound("Incident not found");
 
-    if (!existing.Item) {
-      return notFound("Alert not found");
-    }
-
-    const updated = await docClient.send(
-      new UpdateCommand({
-        TableName: tables.alert,
-        Key: { alertId },
-        UpdateExpression: "SET #status = :status, updatedAt = :updatedAt, updatedByRole = :role",
-        ExpressionAttributeNames: { "#status": "status" },
-        ExpressionAttributeValues: {
-          ":status": status,
-          ":updatedAt": new Date().toISOString(),
-          ":role": actorRole
-        },
-        ReturnValues: "ALL_NEW"
-      })
-    );
-
-    return ok({ item: updated.Attributes });
+    return ok({
+      item: {
+        ...updated,
+        alertId: updated.incidentId,
+      },
+    });
   } catch (error) {
     console.error("updateAlertStatus error", error);
     return serverError("Failed to update alert status");

@@ -14,13 +14,17 @@ import '../state/monitoring_controller.dart';
 import '../utils/alert_audio_player_stub.dart'
     if (dart.library.html) '../utils/alert_audio_player_web.dart'
     as alert_audio;
+import '../utils/fcm_web_probe_stub.dart'
+    if (dart.library.html) '../utils/fcm_web_probe_web.dart' as web_probe;
 import '../widgets/ui_kit.dart';
 import 'alert_detail_page.dart';
+import 'admin_device_management_page.dart';
 import 'alerts_page.dart';
 import 'admin_management_page.dart';
 import 'dashboard_page.dart';
 import 'settings_page.dart';
 import 'trends_page.dart';
+import 'user_devices_page.dart';
 import 'work_orders_page.dart';
 
 class HomeShellPage extends StatefulWidget {
@@ -40,10 +44,9 @@ class HomeShellPage extends StatefulWidget {
 }
 
 class _HomeShellPageState extends State<HomeShellPage> {
-  // Temporary safety switch: disable in-app popup overlays on web debug to
-  // avoid re-entrant layout / mouse tracker assertion storms.
-  static const bool _enableInAppAlertPopups = false;
-  static const double _compactBreakpoint = 1024;
+  // Enable in-app alert popups so critical/warning messages are visible even
+  // when browser/system push notifications are not shown.
+  static const bool _enableInAppAlertPopups = true;
 
   late final MonitoringController _controller;
   late final PushNotificationService _pushService;
@@ -55,43 +58,87 @@ class _HomeShellPageState extends State<HomeShellPage> {
   final Set<String> _shownAlertPopups = <String>{};
   final Set<String> _shownFcmPopups = <String>{};
   bool _alertPopupPrimed = false;
-  SensorLevel _activeAlertSoundLevel = SensorLevel.warning;
   String _pushRule = 'Warning + Critical';
   bool _alertSoundEnabled = true;
   DateTime? _lastNotificationSettingSync;
   bool _webAudioPrimed = false;
+  bool _webAutoPermissionAttempted = false;
+  bool _webAutoPermissionInFlight = false;
+  bool _soundConsentPromptShown = false;
+  bool _soundConsentPromptOpen = false;
   Timer? _alertSoundLoopTimer;
   Timer? _pushRetryTimer;
   int _pushRetryCount = 0;
   bool _manualRefreshBusy = false;
   bool _manualPushBusy = false;
   int _refreshToken = 0;
-  Duration _alertSoundInterval = const Duration(seconds: 4);
   DateTime? _lastPopupShownAt;
-  static const Duration _popupWindow = Duration(seconds: 15);
+  static const Duration _alertFeedbackWindow = Duration(seconds: 30);
+  static const Duration _alertSoundDuration = Duration(seconds: 10);
+  static const Duration _popupCooldown = _alertFeedbackWindow;
+  static const Duration _recentAlertPopupWindow = Duration(minutes: 5);
   static const String _defaultZone = 'Zone A - Pump Station';
+  static const Color _sideNavBg = Color(0xFF102A34);
+  static const Color _sideNavDivider = Color(0xFF1E3F4D);
+  static const Color _sideNavAccent = Color(0xFF67D2E0);
+  static const Color _sideNavMuted = Color(0xFF9EB8C3);
+  static const Color _sideNavText = Color(0xFFE7F3F7);
+  static const Color _sideNavSelected = Color(0xFF1A5667);
   bool get _isAdmin => widget.user.role == UserRole.admin;
-  bool get _isSuperAdmin {
-    final id = widget.user.username.trim().toLowerCase();
-    return id == 'admin@alertrix.local' || id == 'admin';
-  }
+  static const int _navDashboard = 0;
+  static const int _navTrends = 1;
+  static const int _navAlerts = 2;
+  static const int _navWorkOrders = 3;
+  static const int _navDevices = 4;
+  static const int _navSettings = 5;
+  static const int _navAdminManagement = 6;
 
   List<int> get _visibleNavIndexes {
-    final base =
-        _isSuperAdmin ? const <int>[0, 1, 2, 3, 4, 5] : const <int>[0, 1, 2, 4];
+    final base = _isAdmin
+        ? const <int>[
+            _navDashboard,
+            _navTrends,
+            _navAlerts,
+            _navWorkOrders,
+            _navDevices,
+            _navSettings,
+            _navAdminManagement,
+          ]
+        : const <int>[
+            _navDashboard,
+            _navTrends,
+            _navAlerts,
+            _navDevices,
+            _navSettings,
+          ];
     final seen = <int>{};
     return base.where(seen.add).toList(growable: false);
   }
 
-  static const List<_NavItem> _navItems = [
-    _NavItem(icon: Icons.dashboard_outlined, label: 'Response Overview'),
-    _NavItem(icon: Icons.insights_outlined, label: 'Situation Trends'),
-    _NavItem(icon: Icons.warning_amber_outlined, label: 'Incident Queue'),
-    _NavItem(icon: Icons.assignment_outlined, label: 'Work Orders'),
-    _NavItem(icon: Icons.settings_outlined, label: 'Response Settings'),
-    _NavItem(
-        icon: Icons.admin_panel_settings_outlined, label: 'Admin Management'),
-  ];
+  String get _alertsNavLabel => 'Active Incidents';
+  String get _settingsNavLabel =>
+      _isAdmin ? 'Response Settings' : 'Notification Settings';
+  String get _devicesNavLabel => _isAdmin ? 'Device Management' : 'My Devices';
+  String get _shellName => _isAdmin ? 'Alertrix Admin' : 'Alertrix User';
+
+  List<_NavItem> get _navItems => [
+        _NavItem(
+          icon: Icons.dashboard_outlined,
+          label: _isAdmin ? 'Response Overview' : 'Dashboard',
+        ),
+        const _NavItem(
+          icon: Icons.insights_outlined,
+          label: 'Situation Trends',
+        ),
+        _NavItem(icon: Icons.warning_amber_outlined, label: _alertsNavLabel),
+        const _NavItem(icon: Icons.assignment_outlined, label: 'Work Orders'),
+        _NavItem(icon: Icons.memory_outlined, label: _devicesNavLabel),
+        _NavItem(icon: Icons.settings_outlined, label: _settingsNavLabel),
+        const _NavItem(
+          icon: Icons.admin_panel_settings_outlined,
+          label: 'Admin Management',
+        ),
+      ];
 
   @override
   void initState() {
@@ -126,9 +173,8 @@ class _HomeShellPageState extends State<HomeShellPage> {
         final snapshot = _controller.snapshot;
         final compact = _isCompactLayout(context);
         return Listener(
-          onPointerDown: kIsWeb && !_webAudioPrimed
-              ? (_) => _primeAlertAudioByInteraction()
-              : null,
+          onPointerDown:
+              kIsWeb ? (_) => unawaited(_handleWebPointerDown()) : null,
           child: compact
               ? _buildCompactScaffold(snapshot)
               : _buildDesktopScaffold(snapshot),
@@ -138,7 +184,7 @@ class _HomeShellPageState extends State<HomeShellPage> {
   }
 
   bool _isCompactLayout(BuildContext context) {
-    return MediaQuery.sizeOf(context).width < _compactBreakpoint;
+    return uiIsCompactLayout(context);
   }
 
   Widget _buildDesktopScaffold(MonitoringSnapshot? snapshot) {
@@ -159,95 +205,20 @@ class _HomeShellPageState extends State<HomeShellPage> {
       appBar: AppBar(
         toolbarHeight: 58,
         titleSpacing: 8,
-        title: Text(
-          _titleByIndex(_selectedIndex),
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-          style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700),
+        leading: IconButton(
+          tooltip: 'All pages',
+          onPressed: _openCompactNavigationSheet,
+          icon: const Icon(Icons.menu_rounded),
         ),
+        title: _buildCompactTopBarTitle(),
         actions: [
-          _buildQuickPopupButton(),
           _buildRefreshActionButton(),
           _buildPushActionButton(),
           _buildUserMenuButton(),
         ],
       ),
-      drawer: Drawer(
-        child: SafeArea(
-          child: Column(
-            children: [
-              Padding(
-                padding: const EdgeInsets.fromLTRB(16, 16, 16, 10),
-                child: Row(
-                  children: [
-                    Container(
-                      width: 28,
-                      height: 28,
-                      decoration: BoxDecoration(
-                        color: const Color(0xFF0A7E8C).withOpacity(0.14),
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                      child: const Icon(
-                        Icons.shield_outlined,
-                        color: Color(0xFF0A7E8C),
-                        size: 18,
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    const Expanded(
-                      child: Text(
-                        'Alertrix',
-                        style: TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.w800,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              const Divider(height: 1),
-              Expanded(
-                child: ListView.builder(
-                  padding: const EdgeInsets.all(8),
-                  itemCount: _visibleNavIndexes.length,
-                  itemBuilder: (context, index) {
-                    final navIndex = _visibleNavIndexes[index];
-                    final selected = _selectedIndex == navIndex;
-                    final item = _navItems[navIndex];
-                    return ListTile(
-                      dense: true,
-                      leading: Icon(
-                        item.icon,
-                        color: selected
-                            ? const Color(0xFF0A7E8C)
-                            : const Color(0xFF5D7078),
-                      ),
-                      title: Text(
-                        item.label,
-                        style: TextStyle(
-                          fontWeight: FontWeight.w700,
-                          color: selected
-                              ? const Color(0xFF0A7E8C)
-                              : const Color(0xFF2A3B42),
-                        ),
-                      ),
-                      selected: selected,
-                      selectedTileColor:
-                          const Color(0xFF0A7E8C).withOpacity(0.10),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(10),
-                      ),
-                      onTap: () => _selectNavIndex(navIndex, closeDrawer: true),
-                    );
-                  },
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
       body: _buildShellBody(snapshot, compact: true),
+      bottomNavigationBar: _buildCompactBottomNavigation(),
     );
   }
 
@@ -263,11 +234,16 @@ class _HomeShellPageState extends State<HomeShellPage> {
     }
 
     if (compact) {
+      final compactPadding = uiPagePadding(context);
       return Column(
         children: [
           Container(
-            margin: const EdgeInsets.fromLTRB(
-                UiSpace.page, UiSpace.page, UiSpace.page, 0),
+            margin: EdgeInsets.fromLTRB(
+              compactPadding.left,
+              UiSpace.gap,
+              compactPadding.right,
+              0,
+            ),
             padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
             decoration: BoxDecoration(
               color: UiColors.surface,
@@ -278,7 +254,7 @@ class _HomeShellPageState extends State<HomeShellPage> {
               child: _buildTopStatusPills(),
             ),
           ),
-          const SizedBox(height: UiSpace.page),
+          SizedBox(height: uiSectionSpacing(context)),
           Expanded(child: _buildPage(snapshot)),
         ],
       );
@@ -312,7 +288,7 @@ class _HomeShellPageState extends State<HomeShellPage> {
         UiSpace.page,
       ),
       decoration: BoxDecoration(
-        color: UiColors.surface,
+        color: _sideNavBg,
         borderRadius: BorderRadius.circular(UiRadius.big),
         boxShadow: const [
           BoxShadow(
@@ -322,89 +298,92 @@ class _HomeShellPageState extends State<HomeShellPage> {
           ),
         ],
       ),
-      child: Column(
-        children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(14, 14, 14, 10),
-            child: Row(
-              children: [
-                Container(
-                  width: 28,
-                  height: 28,
-                  decoration: BoxDecoration(
-                    color: const Color(0xFF0A7E8C).withOpacity(0.14),
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: const Icon(
-                    Icons.shield_outlined,
-                    color: Color(0xFF0A7E8C),
-                    size: 18,
+      child: _buildNavigationMenu(closeOnTap: false),
+    );
+  }
+
+  Widget _buildNavigationMenu({required bool closeOnTap}) {
+    return Column(
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(14, 14, 14, 10),
+          child: Row(
+            children: [
+              Container(
+                width: 28,
+                height: 28,
+                decoration: BoxDecoration(
+                  color: const Color(0xFF1A4857),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: const Icon(
+                  Icons.shield_outlined,
+                  color: _sideNavAccent,
+                  size: 18,
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  _shellName,
+                  style: const TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w800,
+                    color: _sideNavText,
                   ),
                 ),
-                const SizedBox(width: 8),
-                const Expanded(
-                  child: Text(
-                    'Alertrix',
-                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800),
-                  ),
-                ),
-              ],
-            ),
+              ),
+            ],
           ),
-          const Divider(height: 1),
-          Expanded(
-            child: ListView.builder(
-              itemCount: _visibleNavIndexes.length,
-              padding: const EdgeInsets.all(10),
-              itemBuilder: (context, index) {
-                final navIndex = _visibleNavIndexes[index];
-                final selected = _selectedIndex == navIndex;
-                final item = _navItems[navIndex];
-                return Padding(
-                  padding: const EdgeInsets.only(bottom: 6),
-                  child: InkWell(
-                    borderRadius: BorderRadius.circular(12),
-                    onTap: () => _selectNavIndex(navIndex),
-                    child: AnimatedContainer(
-                      duration: const Duration(milliseconds: 180),
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 12,
-                        vertical: 10,
-                      ),
-                      decoration: BoxDecoration(
-                        color: selected
-                            ? const Color(0xFF0A7E8C).withOpacity(0.14)
-                            : Colors.transparent,
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      child: Row(
-                        children: [
-                          Icon(
-                            item.icon,
-                            color: selected
-                                ? const Color(0xFF0A7E8C)
-                                : const Color(0xFF5D7078),
+        ),
+        const Divider(height: 1, color: _sideNavDivider),
+        Expanded(
+          child: ListView.builder(
+            itemCount: _visibleNavIndexes.length,
+            padding: const EdgeInsets.all(10),
+            itemBuilder: (context, index) {
+              final navIndex = _visibleNavIndexes[index];
+              final selected = _selectedIndex == navIndex;
+              final item = _navItems[navIndex];
+              return Padding(
+                padding: const EdgeInsets.only(bottom: 6),
+                child: InkWell(
+                  borderRadius: BorderRadius.circular(12),
+                  onTap: () =>
+                      _selectNavIndex(navIndex, closeDrawer: closeOnTap),
+                  child: AnimatedContainer(
+                    duration: const Duration(milliseconds: 180),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 10,
+                    ),
+                    decoration: BoxDecoration(
+                      color: selected ? _sideNavSelected : Colors.transparent,
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Row(
+                      children: [
+                        Icon(
+                          item.icon,
+                          color: selected ? _sideNavAccent : _sideNavMuted,
+                        ),
+                        const SizedBox(width: 10),
+                        Text(
+                          item.label,
+                          style: TextStyle(
+                            fontWeight: FontWeight.w700,
+                            color: selected ? _sideNavAccent : _sideNavText,
                           ),
-                          const SizedBox(width: 10),
-                          Text(
-                            item.label,
-                            style: TextStyle(
-                              fontWeight: FontWeight.w700,
-                              color: selected
-                                  ? const Color(0xFF0A7E8C)
-                                  : const Color(0xFF2A3B42),
-                            ),
-                          ),
-                        ],
-                      ),
+                        ),
+                      ],
                     ),
                   ),
-                );
-              },
-            ),
+                ),
+              );
+            },
           ),
-        ],
-      ),
+        ),
+      ],
     );
   }
 
@@ -415,6 +394,95 @@ class _HomeShellPageState extends State<HomeShellPage> {
     if (closeDrawer) {
       Navigator.of(context).pop();
     }
+  }
+
+  List<int> get _compactPrimaryNavIndexes {
+    const preferred = <int>[
+      _navDashboard,
+      _navAlerts,
+      _navDevices,
+      _navSettings,
+    ];
+    final items = <int>[];
+    for (final navIndex in preferred) {
+      if (_visibleNavIndexes.contains(navIndex) && !items.contains(navIndex)) {
+        items.add(navIndex);
+      }
+    }
+    if (items.length < 4) {
+      for (final navIndex in _visibleNavIndexes) {
+        if (items.contains(navIndex)) continue;
+        items.add(navIndex);
+        if (items.length >= 4) break;
+      }
+    }
+    return items;
+  }
+
+  int get _compactSelectedBarIndex {
+    final primary = _compactPrimaryNavIndexes;
+    final selected = primary.indexOf(_selectedIndex);
+    if (selected >= 0) return selected;
+    return primary.length;
+  }
+
+  Future<void> _openCompactNavigationSheet() async {
+    if (!mounted) return;
+    await showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: _sideNavBg,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
+      ),
+      builder: (sheetContext) {
+        return SafeArea(
+          child: Column(
+            children: [
+              const SizedBox(height: 8),
+              Container(
+                width: 42,
+                height: 4,
+                decoration: BoxDecoration(
+                  color: _sideNavMuted,
+                  borderRadius: BorderRadius.circular(999),
+                ),
+              ),
+              const SizedBox(height: 10),
+              Expanded(
+                child: _buildNavigationMenu(closeOnTap: true),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildCompactBottomNavigation() {
+    final primary = _compactPrimaryNavIndexes;
+    final destinations = [
+      ...primary.map(
+        (navIndex) => NavigationDestination(
+          icon: Icon(_navItems[navIndex].icon),
+          label: _navItems[navIndex].label,
+        ),
+      ),
+      const NavigationDestination(
+        icon: Icon(Icons.grid_view_rounded),
+        label: 'More',
+      ),
+    ];
+    return NavigationBar(
+      selectedIndex: _compactSelectedBarIndex,
+      onDestinationSelected: (destinationIndex) {
+        if (destinationIndex < primary.length) {
+          _selectNavIndex(primary[destinationIndex]);
+          return;
+        }
+        unawaited(_openCompactNavigationSheet());
+      },
+      destinations: destinations,
+    );
   }
 
   void _handleControllerSideEffects() {
@@ -449,7 +517,7 @@ class _HomeShellPageState extends State<HomeShellPage> {
                 overflow: TextOverflow.ellipsis,
                 style: const TextStyle(
                   fontSize: 12,
-                  color: Color(0xFF5E7179),
+                  color: UiColors.textMuted,
                   fontWeight: FontWeight.w700,
                 ),
               ),
@@ -464,10 +532,34 @@ class _HomeShellPageState extends State<HomeShellPage> {
           ),
         ),
         const SizedBox(width: 8),
-        _buildQuickPopupButton(),
         _buildRefreshActionButton(),
         _buildPushActionButton(),
         _buildUserMenuButton(),
+      ],
+    );
+  }
+
+  Widget _buildCompactTopBarTitle() {
+    return Column(
+      mainAxisAlignment: MainAxisAlignment.center,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text(
+          'Alertrix',
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: TextStyle(fontSize: 14, fontWeight: FontWeight.w800),
+        ),
+        Text(
+          _titleByIndex(_selectedIndex),
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: const TextStyle(
+            fontSize: 12,
+            color: UiColors.textMuted,
+            fontWeight: FontWeight.w700,
+          ),
+        ),
       ],
     );
   }
@@ -478,10 +570,10 @@ class _HomeShellPageState extends State<HomeShellPage> {
     final hasCloudError = _controller.errorMessage != null;
     final lastSync = _controller.lastSuccessfulSyncAt;
 
-    final cloudLabel = hasCloudError ? 'Degraded' : 'Healthy';
+    final cloudLabel = hasCloudError ? 'Degraded' : 'Normal';
     final cloudTone =
         hasCloudError ? _TopStatusTone.warning : _TopStatusTone.healthy;
-    final apiLabel = _controller.usingRemoteApi ? 'Connected' : 'Fallback';
+    final apiLabel = _controller.usingRemoteApi ? 'Connected' : 'No Data';
     final pushLabel =
         ready ? 'Enabled' : (disabled ? 'Off' : 'Permission Required');
     final pushTone = ready
@@ -530,32 +622,6 @@ class _HomeShellPageState extends State<HomeShellPage> {
               child: CircularProgressIndicator(strokeWidth: 2),
             )
           : const Icon(Icons.refresh_rounded),
-    );
-  }
-
-  Widget _buildQuickPopupButton() {
-    return IconButton(
-      tooltip: 'Show popup',
-      onPressed: _showQuickPopup,
-      icon: const Icon(Icons.open_in_new_rounded),
-    );
-  }
-
-  Future<void> _showQuickPopup() async {
-    await showDialog<void>(
-      context: context,
-      builder: (dialogContext) {
-        return AlertDialog(
-          title: const Text('Notification'),
-          content: const Text('Popup channel is active.'),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(dialogContext).pop(),
-              child: const Text('Close'),
-            ),
-          ],
-        );
-      },
     );
   }
 
@@ -627,20 +693,20 @@ class _HomeShellPageState extends State<HomeShellPage> {
   }) {
     final (bg, text) = switch (tone) {
       _TopStatusTone.healthy => (
-          const Color(0xFFE7F7EE),
-          const Color(0xFF1E7A3F),
+          const Color(0xFFE8F7EE),
+          UiColors.healthy,
         ),
       _TopStatusTone.warning => (
           const Color(0xFFFFF4DF),
-          const Color(0xFFA06100),
+          UiColors.warning,
         ),
       _TopStatusTone.danger => (
           const Color(0xFFFFECEC),
-          const Color(0xFF9A2D2D),
+          UiColors.danger,
         ),
       _TopStatusTone.neutral => (
-          const Color(0xFFF1F4F7),
-          const Color(0xFF566A72),
+          const Color(0xFFEFF4F7),
+          UiColors.neutral,
         ),
     };
 
@@ -676,7 +742,7 @@ class _HomeShellPageState extends State<HomeShellPage> {
           mainAxisSize: MainAxisSize.min,
           children: [
             const Icon(Icons.cloud_off_outlined,
-                size: 48, color: Color(0xFF7C8F96)),
+                size: 48, color: UiColors.neutral),
             const SizedBox(height: 12),
             const Text(
               'Cloud communication lost / no telemetry received',
@@ -687,14 +753,14 @@ class _HomeShellPageState extends State<HomeShellPage> {
               _controller.errorMessage ??
                   'Unable to fetch cloud sensor readings right now.',
               textAlign: TextAlign.center,
-              style: const TextStyle(color: Color(0xFF62757E)),
+              style: const TextStyle(color: UiColors.textMuted),
             ),
             if (_controller.lastSuccessfulSyncAt != null) ...[
               const SizedBox(height: 4),
               Text(
                 'Last successful sync: ${_formatSyncTime(_controller.lastSuccessfulSyncAt!)}',
                 textAlign: TextAlign.center,
-                style: const TextStyle(color: Color(0xFF62757E)),
+                style: const TextStyle(color: UiColors.textMuted),
               ),
             ],
             const SizedBox(height: 14),
@@ -726,8 +792,12 @@ class _HomeShellPageState extends State<HomeShellPage> {
       case 0:
         return DashboardPage(
           snapshot: snapshot,
+          isAdminView: _isAdmin,
+          alertsLabel: _alertsNavLabel,
           onOpenAlertDetail: _openAlertDetail,
           onNavigateToAlerts: () => setState(() => _selectedIndex = 2),
+          onNavigateToDevices: () =>
+              setState(() => _selectedIndex = _navDevices),
           onRetrySync: () => unawaited(_manualRefreshWithFeedback()),
           syncBusy: _manualRefreshBusy || _controller.loading,
         );
@@ -741,34 +811,51 @@ class _HomeShellPageState extends State<HomeShellPage> {
         return AlertsPage(
           snapshot: snapshot,
           role: widget.user.role,
+          apiBaseUrl: widget.apiBaseUrl,
           onOpenAlertDetail: _openAlertDetail,
           onAcknowledgeVisible: (ids) =>
               _controller.confirmAlerts(ids, widget.user.role),
+          onLoadMoreIncidents: _controller.loadMoreActiveIncidents,
+          onLeaveIncidentQueue: _controller.resetActiveIncidentPagination,
         );
       case 3:
         if (_isAdmin) {
           return WorkOrdersPage(apiBaseUrl: widget.apiBaseUrl);
         }
-        return AlertsPage(
-          snapshot: snapshot,
-          role: widget.user.role,
-          onOpenAlertDetail: _openAlertDetail,
-          onAcknowledgeVisible: (ids) =>
-              _controller.confirmAlerts(ids, widget.user.role),
-        );
-      case 5:
+        return UserDevicesPage(snapshot: snapshot);
+      case 4:
         if (_isAdmin) {
-          return AdminManagementPage(
+          return AdminDeviceManagementPage(
+            snapshot: snapshot,
             apiBaseUrl: widget.apiBaseUrl,
-            adminHeaderUserId: _adminHeaderUserId(),
+            actorUserId: _adminHeaderUserId(),
           );
         }
+        return UserDevicesPage(snapshot: snapshot);
+      case 5:
         return SettingsPage(
           username: widget.user.username,
           role: widget.user.role,
           onNavigateBackToDashboard: () => setState(() => _selectedIndex = 0),
           apiBaseUrl: widget.apiBaseUrl,
           onNotificationSettingsChanged: _loadNotificationSettings,
+        );
+      case 6:
+        if (_isAdmin) {
+          return AdminManagementPage(
+            apiBaseUrl: widget.apiBaseUrl,
+            adminHeaderUserId: _adminHeaderUserId(),
+          );
+        }
+        return AlertsPage(
+          snapshot: snapshot,
+          role: widget.user.role,
+          apiBaseUrl: widget.apiBaseUrl,
+          onOpenAlertDetail: _openAlertDetail,
+          onAcknowledgeVisible: (ids) =>
+              _controller.confirmAlerts(ids, widget.user.role),
+          onLoadMoreIncidents: _controller.loadMoreActiveIncidents,
+          onLeaveIncidentQueue: _controller.resetActiveIncidentPagination,
         );
       default:
         return SettingsPage(
@@ -788,12 +875,14 @@ class _HomeShellPageState extends State<HomeShellPage> {
           alert: alert,
           role: widget.user.role,
           onConfirm: () => _controller.confirmAlert(alert.id, widget.user.role),
+          onResolve: () => _controller.resolveAlert(alert.id, widget.user.role),
           onIgnore: () => _controller.ignoreAlert(alert.id, widget.user.role),
           onCreateWorkOrder: () =>
               _controller.createWorkOrder(alert.id, widget.user.role),
           onSilenceBuzzer: () => _silenceCurrentAlertSound(
             zoneOverride: alert.zone,
           ),
+          onLoadIncidentEvents: () => _controller.fetchIncidentEvents(alert.id),
         ),
       ),
     );
@@ -970,7 +1059,7 @@ class _HomeShellPageState extends State<HomeShellPage> {
       return 'Push disabled by config (MQTT mode)';
     }
     if (lower.contains('waiting for user action')) {
-      return 'FCM pending permission: click the bell icon to enable notifications';
+      return 'FCM pending permission: allow browser notifications when prompted';
     }
     if (lower.contains('timeout')) {
       return 'FCM timeout: browser did not return permission/token in time';
@@ -1002,7 +1091,7 @@ class _HomeShellPageState extends State<HomeShellPage> {
 
     final id = message.messageId ??
         message.data['alertId']?.toString() ??
-        '${message.notification?.title}-${message.notification?.body}-${DateTime.now().millisecondsSinceEpoch ~/ 10000}';
+        '${message.notification?.title}-${message.notification?.body}-${DateTime.now().millisecondsSinceEpoch ~/ _alertFeedbackWindow.inMilliseconds}';
     if (_shownFcmPopups.contains(id)) return;
     _shownFcmPopups.add(id);
     _alertDialogOpen = true;
@@ -1027,7 +1116,13 @@ class _HomeShellPageState extends State<HomeShellPage> {
             children: [
               Icon(Icons.notifications_active_rounded, color: color),
               const SizedBox(width: 8),
-              const Text('Push Alert'),
+              Expanded(
+                child: Text(
+                  _pushPopupTitle(title: title, body: body, severity: severity),
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
             ],
           ),
           content: Column(
@@ -1061,7 +1156,7 @@ class _HomeShellPageState extends State<HomeShellPage> {
                 Navigator.of(dialogContext).pop();
                 setState(() => _selectedIndex = 2);
               },
-              child: const Text('Open Incident Queue'),
+              child: Text('Open $_alertsNavLabel'),
             ),
           ],
         ),
@@ -1075,17 +1170,19 @@ class _HomeShellPageState extends State<HomeShellPage> {
   String _titleByIndex(int index) {
     switch (index) {
       case 0:
-        return 'Response Overview';
+        return _isAdmin ? 'Response Overview' : 'Dashboard';
       case 1:
         return 'Situation Trends';
       case 2:
-        return 'Incident Queue';
+        return _alertsNavLabel;
       case 3:
-        return 'Work Orders';
-      case 5:
+        return _isAdmin ? 'Work Orders' : _devicesNavLabel;
+      case 4:
+        return _devicesNavLabel;
+      case 6:
         return 'Admin Management';
       default:
-        return 'Response Settings';
+        return _settingsNavLabel;
     }
   }
 
@@ -1097,24 +1194,24 @@ class _HomeShellPageState extends State<HomeShellPage> {
 
   void _maybeShowAlertPopup(MonitoringSnapshot snapshot) {
     if (!_enableInAppAlertPopups) return;
-    if (!_alertPopupPrimed) return;
     if (_alertDialogOpen) return;
     if (!mounted) return;
+    if (!_alertPopupPrimed) return;
     if (!_canOpenPopupNow()) return;
 
     AlertEvent? target;
     for (final alert in snapshot.alerts) {
       if (alert.severity != SensorLevel.critical) continue;
-      if (_shownAlertPopups.contains(alert.id)) continue;
       if (!_isAlertWithinPopupWindow(alert.timestamp)) continue;
+      if (_shownAlertPopups.contains(alert.id)) continue;
       target = alert;
       break;
     }
     if (target == null) {
       for (final alert in snapshot.alerts) {
         if (alert.severity != SensorLevel.warning) continue;
-        if (_shownAlertPopups.contains(alert.id)) continue;
         if (!_isAlertWithinPopupWindow(alert.timestamp)) continue;
+        if (_shownAlertPopups.contains(alert.id)) continue;
         target = alert;
         break;
       }
@@ -1145,7 +1242,13 @@ class _HomeShellPageState extends State<HomeShellPage> {
                 children: [
                   Icon(Icons.warning_amber_rounded, color: color),
                   const SizedBox(width: 8),
-                  Text('${severity.label} Alert'),
+                  Expanded(
+                    child: Text(
+                      _alertDialogTitle(popupTarget),
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
                 ],
               ),
               content: Column(
@@ -1159,9 +1262,9 @@ class _HomeShellPageState extends State<HomeShellPage> {
                   const SizedBox(height: 4),
                   Text('Time: ${_formatAlertTime(popupTarget.timestamp)}'),
                   const SizedBox(height: 8),
-                  const Text(
-                    'Recommended: Open Incident Queue and acknowledge this incident.',
-                    style: TextStyle(color: Color(0xFF5F727A)),
+                  Text(
+                    'Recommended Action: ${_recommendedActionForIncident(popupTarget)}',
+                    style: const TextStyle(color: UiColors.textMuted),
                   ),
                 ],
               ),
@@ -1184,7 +1287,7 @@ class _HomeShellPageState extends State<HomeShellPage> {
                     Navigator.of(dialogContext).pop();
                     setState(() => _selectedIndex = 2);
                   },
-                  child: const Text('Open Incident Queue'),
+                  child: Text('Open $_alertsNavLabel'),
                 ),
               ],
             );
@@ -1197,14 +1300,6 @@ class _HomeShellPageState extends State<HomeShellPage> {
     });
   }
 
-  void _primeExistingAlerts(MonitoringSnapshot snapshot) {
-    if (_alertPopupPrimed) return;
-    for (final alert in snapshot.alerts) {
-      _shownAlertPopups.add(alert.id);
-    }
-    _alertPopupPrimed = true;
-  }
-
   String _formatAlertTime(DateTime dt) {
     final y = dt.year.toString().padLeft(4, '0');
     final m = dt.month.toString().padLeft(2, '0');
@@ -1212,6 +1307,41 @@ class _HomeShellPageState extends State<HomeShellPage> {
     final hh = dt.hour.toString().padLeft(2, '0');
     final mm = dt.minute.toString().padLeft(2, '0');
     return '$y-$m-$d $hh:$mm';
+  }
+
+  String _alertDialogTitle(AlertEvent alert) {
+    final eventTitle = _humanReadableAlertEvent(alert.title);
+    return '$eventTitle - ${alert.severity.label}';
+  }
+
+  String _pushPopupTitle({
+    required String title,
+    required String body,
+    required String severity,
+  }) {
+    final eventTitle = _humanReadableAlertEvent('$title $body');
+    final level = severity.toUpperCase() == 'CRITICAL' ? 'Critical' : 'Warning';
+    return '$eventTitle - $level';
+  }
+
+  String _humanReadableAlertEvent(String raw) {
+    final text = raw.toLowerCase();
+    if (text.contains('vibration')) {
+      return 'Vibration Threshold Exceeded';
+    }
+    if (text.contains('waterlevel') || text.contains('water level')) {
+      return 'Water Level Threshold Exceeded';
+    }
+    if (text.contains('temperature')) {
+      return 'Temperature Threshold Exceeded';
+    }
+    final trimmed = raw.trim();
+    if (trimmed.isEmpty) return 'Sensor Threshold Exceeded';
+    return trimmed
+        .split(RegExp(r'\s+'))
+        .where((part) => part.isNotEmpty)
+        .map((part) => part[0].toUpperCase() + part.substring(1).toLowerCase())
+        .join(' ');
   }
 
   SensorLevel _sensorLevelFromSeverityText(String severityText) {
@@ -1222,31 +1352,30 @@ class _HomeShellPageState extends State<HomeShellPage> {
     };
   }
 
+  String _recommendedActionForIncident(AlertEvent alert) {
+    final title = alert.title.toLowerCase();
+    if (title.contains('water') && alert.severity == SensorLevel.critical) {
+      return 'Avoid ${alert.zone} and wait for further instructions.';
+    }
+    if (alert.severity == SensorLevel.critical) {
+      return 'Move away from the affected area immediately.';
+    }
+    return 'Stay alert and avoid entering ${alert.zone} until the alert clears.';
+  }
+
   Future<void> _startAlertFeedbackLoop(SensorLevel level) async {
     if (level == SensorLevel.normal) return;
-    _activeAlertSoundLevel = level;
-    _alertSoundInterval = level == SensorLevel.critical
-        ? const Duration(seconds: 4)
-        : const Duration(seconds: 9);
     await _primeAlertAudioByInteraction();
     await _ensureNotificationSettingsFresh();
     if (!_shouldTriggerByPushRule(level)) return;
 
-    await _triggerAlertFeedback(level, announce: true);
+    await _triggerAlertFeedback(level, announce: true, continuous: true);
     if (!_alertSoundEnabled) return;
 
     _alertSoundLoopTimer?.cancel();
-    _alertSoundLoopTimer = Timer.periodic(_alertSoundInterval, (timer) {
-      unawaited(_tickAlertSoundLoop());
+    _alertSoundLoopTimer = Timer(_alertSoundDuration, () {
+      unawaited(_stopAlertSoundLoop());
     });
-  }
-
-  Future<void> _tickAlertSoundLoop() async {
-    if (!mounted || !_alertDialogOpen || !_alertSoundEnabled) {
-      await _stopAlertSoundLoop();
-      return;
-    }
-    await _playAlertSound(_activeAlertSoundLevel, announce: false);
   }
 
   Future<void> _stopAlertSoundLoop() async {
@@ -1257,13 +1386,16 @@ class _HomeShellPageState extends State<HomeShellPage> {
     }
   }
 
-  Future<void> _triggerAlertFeedback(SensorLevel level,
-      {required bool announce}) async {
+  Future<void> _triggerAlertFeedback(
+    SensorLevel level, {
+    required bool announce,
+    bool continuous = false,
+  }) async {
     if (level == SensorLevel.normal) return;
     await _ensureNotificationSettingsFresh();
     if (!_shouldTriggerByPushRule(level)) return;
 
-    await _playAlertSound(level, announce: announce);
+    await _playAlertSound(level, announce: announce, continuous: continuous);
 
     if (_supportsMobileHaptics()) {
       try {
@@ -1280,14 +1412,18 @@ class _HomeShellPageState extends State<HomeShellPage> {
     }
   }
 
-  Future<void> _playAlertSound(SensorLevel level,
-      {required bool announce}) async {
+  Future<void> _playAlertSound(
+    SensorLevel level, {
+    required bool announce,
+    bool continuous = false,
+  }) async {
     if (!_alertSoundEnabled) return;
     try {
       if (kIsWeb) {
         await alert_audio.playAlertTone(
           severityLabel: level.label.toUpperCase(),
           announce: announce,
+          continuous: continuous,
         );
       } else {
         await SystemSound.play(SystemSoundType.alert);
@@ -1354,6 +1490,84 @@ class _HomeShellPageState extends State<HomeShellPage> {
     await alert_audio.primeAlertAudio();
   }
 
+  Future<void> _handleWebPointerDown() async {
+    await _primeAlertAudioByInteraction();
+    await _maybeAutoEnablePushPermission();
+    await _maybeAskAlertSoundConsent();
+  }
+
+  Future<void> _maybeAutoEnablePushPermission() async {
+    if (!kIsWeb || !mounted) return;
+    if (_webAutoPermissionAttempted || _webAutoPermissionInFlight) return;
+    if (_pushToken?.isNotEmpty ?? false) {
+      _webAutoPermissionAttempted = true;
+      return;
+    }
+
+    final permission = web_probe.webNotificationPermission().toLowerCase();
+    if (permission == 'denied') {
+      _webAutoPermissionAttempted = true;
+      return;
+    }
+
+    final needsUserDecision =
+        permission == 'default' || permission == 'unknown';
+    final hasGrantedButNoToken = permission == 'granted';
+    if (!needsUserDecision && !hasGrantedButNoToken) {
+      return;
+    }
+
+    _webAutoPermissionAttempted = true;
+    _webAutoPermissionInFlight = true;
+    try {
+      await _setupPushNotifications(
+        userInitiated: true,
+        forceRefreshToken: hasGrantedButNoToken,
+      );
+    } finally {
+      _webAutoPermissionInFlight = false;
+    }
+  }
+
+  Future<void> _maybeAskAlertSoundConsent() async {
+    if (!mounted) return;
+    if (_soundConsentPromptShown || _soundConsentPromptOpen) return;
+
+    _soundConsentPromptShown = true;
+    _soundConsentPromptOpen = true;
+    final enableSound = await showDialog<bool>(
+      context: context,
+      barrierDismissible: true,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Enable Alert Sound'),
+        content: const Text(
+          'Would you like to enable warning/critical alert sound for this session?',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: const Text('No Sound'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: const Text('Enable Sound'),
+          ),
+        ],
+      ),
+    );
+
+    if (!mounted) return;
+    try {
+      if (enableSound == true) {
+        setState(() => _alertSoundEnabled = true);
+      } else if (enableSound == false) {
+        setState(() => _alertSoundEnabled = false);
+      }
+    } finally {
+      _soundConsentPromptOpen = false;
+    }
+  }
+
   Future<void> _silenceCurrentAlertSound({String? zoneOverride}) async {
     await _stopAlertSoundLoop();
     final zone = zoneOverride?.trim().isNotEmpty == true
@@ -1366,9 +1580,9 @@ class _HomeShellPageState extends State<HomeShellPage> {
           zone: zone,
           role: widget.user.role,
           requestedBy: widget.user.username,
-          durationSeconds: 120,
+          durationSeconds: 3600,
         );
-        message = 'Alert sound stopped. Cloud buzzer silenced for 120s.';
+        message = 'Alert sound stopped. Cloud buzzer silenced for 1 hour.';
       } catch (_) {
         message = 'Alert sound stopped. Cloud buzzer silence failed.';
       }
@@ -1394,15 +1608,25 @@ class _HomeShellPageState extends State<HomeShellPage> {
     return _defaultZone;
   }
 
+  void _primeExistingAlerts(MonitoringSnapshot snapshot) {
+    if (_alertPopupPrimed) return;
+    for (final alert in snapshot.alerts) {
+      if (_isAlertWithinPopupWindow(alert.timestamp)) continue;
+      _shownAlertPopups.add(alert.id);
+    }
+    _alertPopupPrimed = true;
+  }
+
   bool _isAlertWithinPopupWindow(DateTime timestamp) {
-    final age = DateTime.now().difference(timestamp);
-    return age >= Duration.zero && age <= _popupWindow;
+    final diff = DateTime.now().difference(timestamp);
+    if (diff.isNegative) return false;
+    return diff <= _recentAlertPopupWindow;
   }
 
   bool _canOpenPopupNow() {
     final last = _lastPopupShownAt;
     if (last == null) return true;
-    return DateTime.now().difference(last) >= _popupWindow;
+    return DateTime.now().difference(last) >= _popupCooldown;
   }
 }
 

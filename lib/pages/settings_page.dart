@@ -4,6 +4,9 @@ import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 
 import '../models/auth_models.dart';
+import '../widgets/dashboard_layout.dart';
+import '../widgets/section_header.dart';
+import '../widgets/status_badge.dart';
 import '../widgets/ui_kit.dart';
 
 class SettingsPage extends StatefulWidget {
@@ -27,10 +30,12 @@ class SettingsPage extends StatefulWidget {
 }
 
 class _SettingsPageState extends State<SettingsPage> {
+  static const int _hardwareBuzzerSilenceSeconds = 3600;
+
   double _waterWarning = 70;
   double _waterCritical = 85;
-  double _vibrationWarning = 2.8;
-  double _vibrationCritical = 4.0;
+  double _vibrationWarning = 10.0;
+  double _vibrationCritical = 14.0;
   double _temperatureWarning = 35;
   double _temperatureCritical = 40;
 
@@ -46,6 +51,7 @@ class _SettingsPageState extends State<SettingsPage> {
   String _siteDescription = 'Primary monitoring station';
   bool _loadingNotificationSettings = false;
   bool _loadingDeviceLocation = false;
+  bool _silencingHardwareBuzzer = false;
 
   bool get _isAdmin => widget.role == UserRole.admin;
   bool get _hasApi => (widget.apiBaseUrl ?? '').trim().isNotEmpty;
@@ -53,6 +59,7 @@ class _SettingsPageState extends State<SettingsPage> {
   @override
   void initState() {
     super.initState();
+    _loadSystemSettings();
     _loadNotificationSettings();
     _loadDeviceLocation();
   }
@@ -60,98 +67,277 @@ class _SettingsPageState extends State<SettingsPage> {
   @override
   Widget build(BuildContext context) {
     final sectionSpace = uiSectionSpacing(context);
-    return ListView(
-      padding: uiPagePadding(context),
+    if (_isAdmin) {
+      return _buildAdminSettingsView(sectionSpace);
+    }
+    return _buildUserSettingsView(sectionSpace);
+  }
+
+  Widget _buildUserSettingsView(double sectionSpace) {
+    final receiveWarning = _pushRule == 'Warning + Critical';
+    final receiveCritical = _pushRule != 'Disabled';
+    return DashboardLayout(
+      title: 'Notification Settings',
+      subtitle:
+          'Manage how you receive warning and critical alerts for your account.',
+      trailing: const StatusBadge(
+        label: 'User Access',
+        tone: UiBadgeTone.stable,
+        icon: Icons.person_outline_rounded,
+        prominent: true,
+      ),
       children: [
-        const UiPageHeader(
-          systemName: 'Alertrix',
-          title: 'Response Settings',
-          subtitle:
-              'System policy, threshold controls, and notification preferences.',
+        _SettingsMiniGrid(
+          items: [
+            _SettingsMiniItem(
+              label: 'Push Policy',
+              value: _pushRule,
+              tone: _pushRule == 'Disabled'
+                  ? UiBadgeTone.noTelemetry
+                  : UiBadgeTone.healthy,
+            ),
+            _SettingsMiniItem(
+              label: 'Alert Sound',
+              value: _alertSoundEnabled ? 'Enabled' : 'Disabled',
+              tone:
+                  _alertSoundEnabled ? UiBadgeTone.healthy : UiBadgeTone.stable,
+            ),
+            _SettingsMiniItem(
+              label: 'Warning Alerts',
+              value: receiveWarning ? 'On' : 'Off',
+              tone: receiveWarning
+                  ? UiBadgeTone.warning
+                  : UiBadgeTone.noTelemetry,
+            ),
+            _SettingsMiniItem(
+              label: 'Critical Alerts',
+              value: receiveCritical ? 'On' : 'Off',
+              tone: receiveCritical
+                  ? UiBadgeTone.critical
+                  : UiBadgeTone.noTelemetry,
+            ),
+          ],
         ),
         SizedBox(height: sectionSpace),
-        _SectionTitle(
+        const SectionHeader(
+          title: 'Notification Settings',
+          subtitle: 'Email, push, and alert sound preferences.',
+          icon: Icons.notifications_active_rounded,
+        ),
+        _ConfigTile(
+          icon: Icons.alternate_email_outlined,
+          title: 'Email notification',
+          summary: _notificationEmail.isEmpty
+              ? 'Not configured'
+              : '$_notificationEmail ($_emailSubscriptionStatus)',
+          actionLabel: 'Manage',
+          enabled: true,
+          onTap: _editNotificationEmail,
+        ),
+        _ConfigTile(
+          icon: Icons.notifications_active_outlined,
+          title: 'Push notification',
+          summary: _pushRule,
+          actionLabel: 'Manage',
+          enabled: true,
+          onTap: _editPushNotifications,
+        ),
+        _ConfigTile(
+          icon: Icons.volume_up_outlined,
+          title: 'Alert sound',
+          summary: _loadingNotificationSettings
+              ? 'Syncing...'
+              : (_alertSoundEnabled ? 'Enabled' : 'Disabled'),
+          actionLabel: 'Manage',
+          enabled: true,
+          onTap: _editAlertSound,
+        ),
+        _ConfigTile(
+          icon: Icons.warning_amber_outlined,
+          title: 'Receive warning alerts',
+          summary: receiveWarning ? 'Enabled' : 'Disabled',
+          actionLabel: 'Manage',
+          enabled: true,
+          onTap: _editPushNotifications,
+        ),
+        _ConfigTile(
+          icon: Icons.crisis_alert_outlined,
+          title: 'Receive critical alerts',
+          summary: receiveCritical ? 'Enabled' : 'Disabled',
+          actionLabel: 'Manage',
+          enabled: true,
+          onTap: _editPushNotifications,
+        ),
+        SizedBox(height: sectionSpace),
+        const SectionHeader(
+          title: 'Account Profile',
+          subtitle: 'Read-only account context for this notification profile.',
+          icon: Icons.account_circle_outlined,
+        ),
+        _ConfigTile(
+          icon: Icons.badge_outlined,
+          title: 'Account role',
+          summary: widget.role.label,
+          actionLabel: '',
+          enabled: false,
+        ),
+        _ConfigTile(
+          icon: Icons.person_outline,
+          title: 'Account ID',
+          summary: widget.username,
+          actionLabel: '',
+          enabled: false,
+        ),
+        _ConfigTile(
+          icon: Icons.place_outlined,
+          title: 'Assigned zone',
+          summary: _loadingDeviceLocation ? 'Syncing...' : _deviceLocation,
+          actionLabel: '',
+          enabled: false,
+        ),
+      ],
+    );
+  }
+
+  Widget _buildAdminSettingsView(double sectionSpace) {
+    final thresholdRisk = _temperatureCritical >= 45 || _waterCritical >= 90
+        ? UiBadgeTone.critical
+        : UiBadgeTone.warning;
+    final pushTone = _pushRule == 'Disabled'
+        ? UiBadgeTone.noTelemetry
+        : (_pushRule == 'Critical only'
+            ? UiBadgeTone.warning
+            : UiBadgeTone.healthy);
+    final dataSourceTone = _hasApi ? UiBadgeTone.healthy : UiBadgeTone.warning;
+    return DashboardLayout(
+      title: 'Response Settings',
+      subtitle:
+          'Admin Control Panel. Only administrators can modify system policy, thresholds, and device settings.',
+      trailing: const StatusBadge(
+        label: 'Admin Control Panel',
+        tone: UiBadgeTone.healthy,
+        icon: Icons.admin_panel_settings_rounded,
+        prominent: true,
+      ),
+      children: [
+        _SettingsOpsBanner(
+          isAdmin: _isAdmin,
+          hasApi: _hasApi,
+          loadingNotificationSettings: _loadingNotificationSettings,
+          loadingDeviceLocation: _loadingDeviceLocation,
+          pushRule: _pushRule,
+          alertSoundEnabled: _alertSoundEnabled,
+        ),
+        SizedBox(height: sectionSpace),
+        _SettingsMiniGrid(
+          items: [
+            const _SettingsMiniItem(
+              label: 'Access Mode',
+              value: 'Admin Control Panel',
+              tone: UiBadgeTone.healthy,
+            ),
+            _SettingsMiniItem(
+              label: 'Threshold Risk',
+              value: thresholdRisk == UiBadgeTone.critical
+                  ? 'Aggressive'
+                  : 'Controlled',
+              tone: thresholdRisk,
+            ),
+            _SettingsMiniItem(
+              label: 'Push Policy',
+              value: _pushRule,
+              tone: pushTone,
+            ),
+            _SettingsMiniItem(
+              label: 'Data Source',
+              value: _hasApi ? 'Cloud API' : 'No telemetry API',
+              tone: dataSourceTone,
+            ),
+          ],
+        ),
+        SizedBox(height: sectionSpace),
+        const SectionHeader(
           title: 'System Policy',
-          subtitle: _isAdmin ? null : 'Read-only in User role',
+          subtitle: 'Refresh behavior and trend defaults.',
+          icon: Icons.settings_suggest_rounded,
         ),
         _ConfigTile(
           icon: Icons.speed_outlined,
           title: 'Auto Refresh Interval',
           summary: 'Every $_refreshSeconds seconds',
-          actionLabel: _isAdmin ? 'Manage' : 'View',
+          actionLabel: 'Manage',
           enabled: true,
-          onTap: _isAdmin ? _editRefreshInterval : _showAdminOnlyHint,
+          onTap: _editRefreshInterval,
         ),
         _ConfigTile(
           icon: Icons.timeline_outlined,
           title: 'Default Trend Window',
           summary: _defaultTrendWindow,
-          actionLabel: _isAdmin ? 'Manage' : 'View',
+          actionLabel: 'Manage',
           enabled: true,
-          onTap: _isAdmin ? _editDefaultTrendWindow : _showAdminOnlyHint,
+          onTap: _editDefaultTrendWindow,
         ),
         _ConfigTile(
           icon: Icons.sync_alt_outlined,
           title: 'Dashboard Refresh Mode',
           summary: _refreshMode,
-          actionLabel: _isAdmin ? 'Manage' : 'View',
+          actionLabel: 'Manage',
           enabled: true,
-          onTap: _isAdmin ? _editRefreshMode : _showAdminOnlyHint,
+          onTap: _editRefreshMode,
         ),
         SizedBox(height: sectionSpace),
-        _SectionTitle(
+        const SectionHeader(
           title: 'Alert Thresholds',
-          subtitle: _isAdmin
-              ? null
-              : 'Threshold editing is restricted to administrators',
+          subtitle: 'Threshold controls and safety policy baseline.',
+          icon: Icons.rule_rounded,
         ),
-        _ConfigTile(
-          icon: Icons.water_drop_outlined,
-          title: 'Water Level Thresholds',
-          summary: '',
-          summaryContent: _ThresholdSummary(
-            warningCritical:
-                'Warning ${_waterWarning.toStringAsFixed(0)}% | Critical ${_waterCritical.toStringAsFixed(0)}%',
-            basis: 'Basis: Public InfoBanjir stages',
-          ),
-          actionLabel: _isAdmin ? 'Manage' : 'View',
-          enabled: true,
-          onTap: _openWaterThresholdEditor,
+        _ThresholdGroupGrid(
+          children: [
+            _ThresholdGroupCard(
+              icon: Icons.water_drop_outlined,
+              title: 'Water Level',
+              unit: '%',
+              warningValue: _waterWarning.toStringAsFixed(0),
+              criticalValue: _waterCritical.toStringAsFixed(0),
+              basis: 'Public InfoBanjir stages',
+              actionLabel: 'Manage',
+              onTap: _openWaterThresholdEditor,
+            ),
+            _ThresholdGroupCard(
+              icon: Icons.vibration_outlined,
+              title: 'Vibration',
+              unit: 'mm/s RMS',
+              warningValue: _vibrationWarning.toStringAsFixed(1),
+              criticalValue: _vibrationCritical.toStringAsFixed(1),
+              basis: 'Prototype calibration',
+              actionLabel: 'Manage',
+              onTap: _openVibrationThresholdEditor,
+            ),
+            _ThresholdGroupCard(
+              icon: Icons.thermostat_outlined,
+              title: 'Temperature',
+              unit: 'deg C',
+              warningValue: _temperatureWarning.toStringAsFixed(0),
+              criticalValue: _temperatureCritical.toStringAsFixed(0),
+              basis: 'Malaysian heat-wave scale',
+              actionLabel: 'Manage',
+              onTap: _openTemperatureThresholdEditor,
+            ),
+          ],
         ),
-        _ConfigTile(
-          icon: Icons.vibration_outlined,
-          title: 'Vibration Thresholds',
-          summary: '',
-          summaryContent: _ThresholdSummary(
-            warningCritical:
-                'Warning ${_vibrationWarning.toStringAsFixed(1)} mm/s | Critical ${_vibrationCritical.toStringAsFixed(1)} mm/s',
-            basis: 'Basis: prototype calibration',
-          ),
-          actionLabel: _isAdmin ? 'Manage' : 'View',
-          enabled: true,
-          onTap: _openVibrationThresholdEditor,
-        ),
-        _ConfigTile(
-          icon: Icons.thermostat_outlined,
-          title: 'Temperature Thresholds',
-          summary: '',
-          summaryContent: _ThresholdSummary(
-            warningCritical:
-                'Warning ${_temperatureWarning.toStringAsFixed(0)}°C | Critical ${_temperatureCritical.toStringAsFixed(0)}°C',
-            basis: 'Basis: Malaysian heat-wave scale',
-          ),
-          actionLabel: _isAdmin ? 'Manage' : 'View',
-          enabled: true,
-          onTap: _openTemperatureThresholdEditor,
-        ),
+        const SizedBox(height: UiSpace.gap),
         _ThresholdAuditCard(
           title: 'Threshold Audit',
-          summary:
-              'Last modified on ${DateTime.now().year}-${DateTime.now().month.toString().padLeft(2, '0')}-${DateTime.now().day.toString().padLeft(2, '0')} by ${widget.username}',
-          detail: 'Updated scope: water, vibration, temperature thresholds',
+          summary: 'Last modified by: ${widget.username}',
+          detail:
+              'Last modified at: ${_formatAuditTimestamp(DateTime.now())}\nUpdated fields: water, vibration, temperature thresholds',
         ),
         SizedBox(height: sectionSpace),
-        const _SectionTitle(title: 'Notification Settings'),
+        const SectionHeader(
+          title: 'Notification Settings',
+          subtitle: 'Email, push, and audible warning preferences.',
+          icon: Icons.notifications_active_rounded,
+        ),
         _ConfigTile(
           icon: Icons.alternate_email_outlined,
           title: 'Notification Email',
@@ -180,16 +366,27 @@ class _SettingsPageState extends State<SettingsPage> {
           enabled: true,
           onTap: _editAlertSound,
         ),
+        _ConfigTile(
+          icon: Icons.volume_off_outlined,
+          title: 'Hardware Buzzer',
+          summary: _silencingHardwareBuzzer
+              ? 'Sending silence command...'
+              : 'Silence $_deviceLocation for 1 hour',
+          actionLabel: _silencingHardwareBuzzer ? 'Sending' : 'Silence',
+          enabled: _hasApi && !_silencingHardwareBuzzer,
+          onTap: _silenceHardwareBuzzer,
+        ),
         SizedBox(height: sectionSpace),
-        _SectionTitle(
+        const SectionHeader(
           title: 'Site and User',
-          subtitle: _isAdmin ? null : 'Site fields are read-only in User role',
+          subtitle: null,
+          icon: Icons.account_tree_rounded,
         ),
         _ConfigTile(
           icon: Icons.apartment_outlined,
           title: 'Site Name',
           summary: _siteName,
-          actionLabel: _isAdmin ? 'Manage' : 'View',
+          actionLabel: 'Manage',
           enabled: true,
           onTap: _openSiteProfileEditor,
         ),
@@ -204,12 +401,21 @@ class _SettingsPageState extends State<SettingsPage> {
           icon: Icons.place_outlined,
           title: 'Device Location',
           summary: _loadingDeviceLocation ? 'Syncing...' : _deviceLocation,
-          actionLabel: _isAdmin ? 'Manage' : 'View',
+          actionLabel: 'Manage',
           enabled: true,
           onTap: _openDeviceLocationEditor,
         ),
       ],
     );
+  }
+
+  String _formatAuditTimestamp(DateTime dt) {
+    final y = dt.year.toString().padLeft(4, '0');
+    final m = dt.month.toString().padLeft(2, '0');
+    final d = dt.day.toString().padLeft(2, '0');
+    final hh = dt.hour.toString().padLeft(2, '0');
+    final mm = dt.minute.toString().padLeft(2, '0');
+    return '$y-$m-$d $hh:$mm';
   }
 
   Future<void> _openWaterThresholdEditor() async {
@@ -224,21 +430,22 @@ class _SettingsPageState extends State<SettingsPage> {
           min: 0,
           max: 100,
           step: 1,
-          onSave: (warning, critical) {
-            setState(() {
-              _waterWarning = warning;
-              _waterCritical = critical;
-            });
+          onSave: (warning, critical) async {
+            if (!_hasApi) {
+              setState(() {
+                _waterWarning = warning;
+                _waterCritical = critical;
+              });
+              return true;
+            }
+            return _saveSystemSettings(
+              thresholds: _buildThresholdPayload(
+                waterWarning: warning,
+                waterCritical: critical,
+              ),
+            );
           },
         ),
-      ),
-    );
-  }
-
-  void _showAdminOnlyHint() {
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('This setting is read-only for User role.'),
       ),
     );
   }
@@ -253,13 +460,22 @@ class _SettingsPageState extends State<SettingsPage> {
           critical: _vibrationCritical,
           editable: _isAdmin,
           min: 0,
-          max: 10,
+          max: 20,
           step: 0.1,
-          onSave: (warning, critical) {
-            setState(() {
-              _vibrationWarning = warning;
-              _vibrationCritical = critical;
-            });
+          onSave: (warning, critical) async {
+            if (!_hasApi) {
+              setState(() {
+                _vibrationWarning = warning;
+                _vibrationCritical = critical;
+              });
+              return true;
+            }
+            return _saveSystemSettings(
+              thresholds: _buildThresholdPayload(
+                vibrationWarning: warning,
+                vibrationCritical: critical,
+              ),
+            );
           },
         ),
       ),
@@ -271,18 +487,27 @@ class _SettingsPageState extends State<SettingsPage> {
       MaterialPageRoute(
         builder: (_) => _ThresholdEditorPage(
           title: 'Edit Temperature Thresholds',
-          unit: '°C',
+          unit: 'deg C',
           warning: _temperatureWarning,
           critical: _temperatureCritical,
           editable: _isAdmin,
           min: 0,
           max: 100,
           step: 1,
-          onSave: (warning, critical) {
-            setState(() {
-              _temperatureWarning = warning;
-              _temperatureCritical = critical;
-            });
+          onSave: (warning, critical) async {
+            if (!_hasApi) {
+              setState(() {
+                _temperatureWarning = warning;
+                _temperatureCritical = critical;
+              });
+              return true;
+            }
+            return _saveSystemSettings(
+              thresholds: _buildThresholdPayload(
+                temperatureWarning: warning,
+                temperatureCritical: critical,
+              ),
+            );
           },
         ),
       ),
@@ -296,11 +521,18 @@ class _SettingsPageState extends State<SettingsPage> {
           name: _siteName,
           description: _siteDescription,
           editable: _isAdmin,
-          onSave: (name, description) {
-            setState(() {
-              _siteName = name;
-              _siteDescription = description;
-            });
+          onSave: (name, description) async {
+            if (!_hasApi) {
+              setState(() {
+                _siteName = name;
+                _siteDescription = description;
+              });
+              return true;
+            }
+            return _saveSystemSettings(
+              siteName: name,
+              siteDescription: description,
+            );
           },
         ),
       ),
@@ -330,7 +562,11 @@ class _SettingsPageState extends State<SettingsPage> {
       labelBuilder: (v) => '$v seconds',
     );
     if (selected != null) {
-      setState(() => _refreshSeconds = selected);
+      if (!_hasApi) {
+        setState(() => _refreshSeconds = selected);
+      } else {
+        await _saveSystemSettings(autoRefreshIntervalSeconds: selected);
+      }
     }
   }
 
@@ -342,7 +578,11 @@ class _SettingsPageState extends State<SettingsPage> {
       labelBuilder: (v) => v,
     );
     if (selected != null) {
-      setState(() => _defaultTrendWindow = selected);
+      if (!_hasApi) {
+        setState(() => _defaultTrendWindow = selected);
+      } else {
+        await _saveSystemSettings(defaultTrendWindow: selected);
+      }
     }
   }
 
@@ -354,7 +594,11 @@ class _SettingsPageState extends State<SettingsPage> {
       labelBuilder: (v) => v,
     );
     if (selected != null) {
-      setState(() => _refreshMode = selected);
+      if (!_hasApi) {
+        setState(() => _refreshMode = selected);
+      } else {
+        await _saveSystemSettings(dashboardRefreshMode: selected);
+      }
     }
   }
 
@@ -415,6 +659,208 @@ class _SettingsPageState extends State<SettingsPage> {
     }
   }
 
+  Future<void> _silenceHardwareBuzzer() async {
+    if (!_hasApi) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Cloud API is not configured.')),
+      );
+      return;
+    }
+
+    setState(() => _silencingHardwareBuzzer = true);
+    try {
+      final resp = await http.post(
+        Uri.parse('${widget.apiBaseUrl}/api/device/buzzer/silence'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          'zone': _deviceLocation,
+          'actorRole': widget.role.label,
+          'requestedBy': widget.username,
+          'durationSeconds': _hardwareBuzzerSilenceSeconds,
+        }),
+      );
+      if (resp.statusCode < 200 || resp.statusCode >= 300) {
+        throw Exception('silence failed');
+      }
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Hardware buzzer silenced for 1 hour.')),
+      );
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Failed to silence hardware buzzer.')),
+      );
+    } finally {
+      if (mounted) {
+        setState(() => _silencingHardwareBuzzer = false);
+      }
+    }
+  }
+
+  Future<void> _loadSystemSettings() async {
+    if (!_hasApi) return;
+    try {
+      final resp = await http.get(
+        Uri.parse('${widget.apiBaseUrl}/api/settings/system'),
+        headers: _settingsHeaders(),
+      );
+      if (resp.statusCode < 200 || resp.statusCode >= 300) {
+        return;
+      }
+      final json = jsonDecode(resp.body) as Map<String, dynamic>;
+      if (!mounted) return;
+      setState(() {
+        _applySystemSettingsFromApi(json);
+      });
+    } catch (_) {
+      // Keep local defaults when API is unavailable.
+    }
+  }
+
+  Future<bool> _saveSystemSettings({
+    int? autoRefreshIntervalSeconds,
+    String? defaultTrendWindow,
+    String? dashboardRefreshMode,
+    String? siteName,
+    String? siteDescription,
+    Map<String, dynamic>? thresholds,
+  }) async {
+    if (!_hasApi) return false;
+    try {
+      final payload = <String, dynamic>{};
+      if (autoRefreshIntervalSeconds != null) {
+        payload['autoRefreshIntervalSeconds'] = autoRefreshIntervalSeconds;
+      }
+      if (defaultTrendWindow != null) {
+        payload['defaultTrendWindow'] = defaultTrendWindow;
+      }
+      if (dashboardRefreshMode != null) {
+        payload['dashboardRefreshMode'] = dashboardRefreshMode;
+      }
+      if (siteName != null) {
+        payload['siteName'] = siteName;
+      }
+      if (siteDescription != null) {
+        payload['siteDescription'] = siteDescription;
+      }
+      if (thresholds != null) {
+        payload['thresholds'] = thresholds;
+      }
+      if (payload.isEmpty) return true;
+
+      final resp = await http.post(
+        Uri.parse('${widget.apiBaseUrl}/api/settings/system'),
+        headers: {
+          ..._settingsHeaders(),
+          'Content-Type': 'application/json',
+        },
+        body: jsonEncode(payload),
+      );
+      if (resp.statusCode < 200 || resp.statusCode >= 300) {
+        throw Exception('save failed');
+      }
+
+      final json = jsonDecode(resp.body) as Map<String, dynamic>;
+      if (!mounted) return false;
+      setState(() {
+        _applySystemSettingsFromApi(json);
+      });
+      return true;
+    } catch (_) {
+      if (!mounted) return false;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Failed to save system settings to backend')),
+      );
+      return false;
+    }
+  }
+
+  Map<String, dynamic> _buildThresholdPayload({
+    double? waterWarning,
+    double? waterCritical,
+    double? vibrationWarning,
+    double? vibrationCritical,
+    double? temperatureWarning,
+    double? temperatureCritical,
+  }) {
+    return {
+      'waterLevel': {
+        'warning': waterWarning ?? _waterWarning,
+        'critical': waterCritical ?? _waterCritical,
+      },
+      'vibration': {
+        'warning': vibrationWarning ?? _vibrationWarning,
+        'critical': vibrationCritical ?? _vibrationCritical,
+      },
+      'temperature': {
+        'warning': temperatureWarning ?? _temperatureWarning,
+        'critical': temperatureCritical ?? _temperatureCritical,
+      },
+    };
+  }
+
+  Map<String, String> _settingsHeaders() {
+    return {
+      'x-user-id': widget.username,
+      'x-user-role': widget.role.label,
+    };
+  }
+
+  void _applySystemSettingsFromApi(Map<String, dynamic> json) {
+    final refreshSecondsRaw = json['autoRefreshIntervalSeconds'];
+    if (refreshSecondsRaw is num) {
+      _refreshSeconds = refreshSecondsRaw.toInt();
+    }
+
+    final trendWindowRaw = json['defaultTrendWindow']?.toString().trim();
+    if (trendWindowRaw != null && trendWindowRaw.isNotEmpty) {
+      _defaultTrendWindow = trendWindowRaw;
+    }
+
+    final refreshModeRaw = json['dashboardRefreshMode']?.toString().trim();
+    if (refreshModeRaw != null && refreshModeRaw.isNotEmpty) {
+      _refreshMode = refreshModeRaw;
+    }
+
+    final siteNameRaw = json['siteName']?.toString().trim();
+    if (siteNameRaw != null && siteNameRaw.isNotEmpty) {
+      _siteName = siteNameRaw;
+    }
+
+    final siteDescriptionRaw = json['siteDescription']?.toString().trim();
+    if (siteDescriptionRaw != null && siteDescriptionRaw.isNotEmpty) {
+      _siteDescription = siteDescriptionRaw;
+    }
+
+    final thresholdsRaw = json['thresholds'];
+    if (thresholdsRaw is Map) {
+      final water = thresholdsRaw['waterLevel'];
+      if (water is Map) {
+        final warning = water['warning'];
+        final critical = water['critical'];
+        if (warning is num) _waterWarning = warning.toDouble();
+        if (critical is num) _waterCritical = critical.toDouble();
+      }
+
+      final vibration = thresholdsRaw['vibration'];
+      if (vibration is Map) {
+        final warning = vibration['warning'];
+        final critical = vibration['critical'];
+        if (warning is num) _vibrationWarning = warning.toDouble();
+        if (critical is num) _vibrationCritical = critical.toDouble();
+      }
+
+      final temperature = thresholdsRaw['temperature'];
+      if (temperature is Map) {
+        final warning = temperature['warning'];
+        final critical = temperature['critical'];
+        if (warning is num) _temperatureWarning = warning.toDouble();
+        if (critical is num) _temperatureCritical = critical.toDouble();
+      }
+    }
+  }
+
   Future<T?> _openChoiceDialog<T>({
     required String title,
     required T currentValue,
@@ -468,10 +914,7 @@ class _SettingsPageState extends State<SettingsPage> {
     try {
       final resp = await http.get(
         Uri.parse('${widget.apiBaseUrl}/api/settings/notifications'),
-        headers: {
-          'x-user-id': widget.username,
-          'x-user-role': widget.role.label,
-        },
+        headers: _settingsHeaders(),
       );
       if (resp.statusCode >= 200 && resp.statusCode < 300) {
         final json = jsonDecode(resp.body) as Map<String, dynamic>;
@@ -515,8 +958,7 @@ class _SettingsPageState extends State<SettingsPage> {
         Uri.parse('${widget.apiBaseUrl}/api/settings/notifications'),
         headers: {
           'Content-Type': 'application/json',
-          'x-user-id': widget.username,
-          'x-user-role': widget.role.label,
+          ..._settingsHeaders(),
         },
         body: jsonEncode(payload),
       );
@@ -574,24 +1016,320 @@ class _SettingsPageState extends State<SettingsPage> {
   }
 }
 
-class _SectionTitle extends StatelessWidget {
-  const _SectionTitle({required this.title, this.subtitle});
+class _SettingsOpsBanner extends StatelessWidget {
+  const _SettingsOpsBanner({
+    required this.isAdmin,
+    required this.hasApi,
+    required this.loadingNotificationSettings,
+    required this.loadingDeviceLocation,
+    required this.pushRule,
+    required this.alertSoundEnabled,
+  });
 
-  final String title;
-  final String? subtitle;
+  final bool isAdmin;
+  final bool hasApi;
+  final bool loadingNotificationSettings;
+  final bool loadingDeviceLocation;
+  final String pushRule;
+  final bool alertSoundEnabled;
 
   @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 12),
+    final loadingAny = loadingNotificationSettings || loadingDeviceLocation;
+    final tone = !hasApi
+        ? UiBadgeTone.warning
+        : (isAdmin ? UiBadgeTone.healthy : UiBadgeTone.stable);
+    final bg = switch (tone) {
+      UiBadgeTone.warning => const Color(0xFFFFF5E6),
+      UiBadgeTone.stable => const Color(0xFFEAF2F8),
+      _ => const Color(0xFFEAF7EF),
+    };
+    final border = switch (tone) {
+      UiBadgeTone.warning => const Color(0xFFF2D094),
+      UiBadgeTone.stable => const Color(0xFFBFD5E6),
+      _ => const Color(0xFFB8DFC4),
+    };
+    final title = !hasApi
+        ? 'Cloud API not configured'
+        : (isAdmin
+            ? 'Administrative control panel active'
+            : 'Operator settings panel in read-only governance mode');
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      decoration: BoxDecoration(
+        color: bg,
+        borderRadius: BorderRadius.circular(UiRadius.card),
+        border: Border.all(color: border),
+      ),
+      child: Row(
+        children: [
+          Icon(
+            !hasApi
+                ? Icons.cloud_off_rounded
+                : (isAdmin
+                    ? Icons.admin_panel_settings_rounded
+                    : Icons.tune_rounded),
+            color: !hasApi
+                ? UiColors.warning
+                : (isAdmin ? UiColors.healthy : UiColors.brand),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(title, style: UiText.cardTitle),
+                const SizedBox(height: 2),
+                Text(
+                  'Push: $pushRule | Alert Sound: ${alertSoundEnabled ? 'Enabled' : 'Disabled'} | Device location sync: ${loadingDeviceLocation ? 'Syncing' : 'Ready'}${loadingAny ? ' | Updating policy cache...' : ''}',
+                  style: UiText.helper,
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _SettingsMiniItem {
+  const _SettingsMiniItem({
+    required this.label,
+    required this.value,
+    required this.tone,
+  });
+
+  final String label;
+  final String value;
+  final UiBadgeTone tone;
+}
+
+class _SettingsMiniGrid extends StatelessWidget {
+  const _SettingsMiniGrid({required this.items});
+
+  final List<_SettingsMiniItem> items;
+
+  @override
+  Widget build(BuildContext context) {
+    final compact = uiIsCompactLayout(context);
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final singleColumn = uiIsCompactLayout(context);
+        final width = constraints.maxWidth >= 1200
+            ? (constraints.maxWidth - UiSpace.gap * 3) / 4
+            : !singleColumn && constraints.maxWidth >= 760
+                ? (constraints.maxWidth - UiSpace.gap) / 2
+                : constraints.maxWidth;
+        return Wrap(
+          spacing: UiSpace.gap,
+          runSpacing: UiSpace.gap,
+          children: items
+              .map(
+                (item) => SizedBox(
+                  width: width,
+                  child: UiCard(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 14,
+                      vertical: 12,
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            _SettingsStatusDot(tone: item.tone),
+                            const SizedBox(width: 6),
+                            Expanded(
+                                child: Text(item.label, style: UiText.helper)),
+                          ],
+                        ),
+                        const SizedBox(height: 6),
+                        Text(
+                          item.value,
+                          style: UiText.cardTitle.copyWith(
+                            fontSize: compact ? 14 : 15,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              )
+              .toList(growable: false),
+        );
+      },
+    );
+  }
+}
+
+class _SettingsStatusDot extends StatelessWidget {
+  const _SettingsStatusDot({required this.tone});
+
+  final UiBadgeTone tone;
+
+  @override
+  Widget build(BuildContext context) {
+    final color = switch (tone) {
+      UiBadgeTone.critical => UiColors.danger,
+      UiBadgeTone.warning => UiColors.warning,
+      UiBadgeTone.offline => UiColors.neutral,
+      UiBadgeTone.noTelemetry => UiColors.neutral,
+      UiBadgeTone.healthy => UiColors.healthy,
+      UiBadgeTone.stable => UiColors.brand,
+    };
+    return Container(
+      width: 8,
+      height: 8,
+      decoration: BoxDecoration(
+        color: color,
+        borderRadius: BorderRadius.circular(999),
+      ),
+    );
+  }
+}
+
+class _ThresholdGroupGrid extends StatelessWidget {
+  const _ThresholdGroupGrid({required this.children});
+
+  final List<Widget> children;
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final compact = uiIsCompactLayout(context);
+        final width = constraints.maxWidth >= 1180
+            ? (constraints.maxWidth - UiSpace.gap * 2) / 3
+            : (!compact && constraints.maxWidth >= 760
+                ? (constraints.maxWidth - UiSpace.gap) / 2
+                : constraints.maxWidth);
+        return Wrap(
+          spacing: UiSpace.gap,
+          runSpacing: UiSpace.gap,
+          children: children
+              .map((child) => SizedBox(width: width, child: child))
+              .toList(growable: false),
+        );
+      },
+    );
+  }
+}
+
+class _ThresholdGroupCard extends StatelessWidget {
+  const _ThresholdGroupCard({
+    required this.icon,
+    required this.title,
+    required this.unit,
+    required this.warningValue,
+    required this.criticalValue,
+    required this.basis,
+    required this.actionLabel,
+    required this.onTap,
+  });
+
+  final IconData icon;
+  final String title;
+  final String unit;
+  final String warningValue;
+  final String criticalValue;
+  final String basis;
+  final String actionLabel;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return UiCard(
+      padding: const EdgeInsets.all(16),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(title, style: UiText.sectionTitle),
-          if (subtitle != null) ...[
-            const SizedBox(height: 4),
-            Text(subtitle!, style: UiText.helper),
-          ],
+          Row(
+            children: [
+              Container(
+                width: 38,
+                height: 38,
+                decoration: BoxDecoration(
+                  color: UiColors.brandSoft,
+                  borderRadius: BorderRadius.circular(UiRadius.input),
+                ),
+                child: Icon(icon, color: UiColors.brand, size: 19),
+              ),
+              const SizedBox(width: 10),
+              Expanded(child: Text(title, style: UiText.cardTitle)),
+              OutlinedButton(
+                onPressed: onTap,
+                style: uiSecondaryButton(),
+                child: Text(actionLabel),
+              ),
+            ],
+          ),
+          const SizedBox(height: 14),
+          Row(
+            children: [
+              Expanded(
+                child: _ThresholdValueBlock(
+                  label: 'Warning',
+                  value: warningValue,
+                  unit: unit,
+                  tone: UiBadgeTone.warning,
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: _ThresholdValueBlock(
+                  label: 'Critical',
+                  value: criticalValue,
+                  unit: unit,
+                  tone: UiBadgeTone.critical,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Text('Basis: $basis', style: UiText.helper),
+        ],
+      ),
+    );
+  }
+}
+
+class _ThresholdValueBlock extends StatelessWidget {
+  const _ThresholdValueBlock({
+    required this.label,
+    required this.value,
+    required this.unit,
+    required this.tone,
+  });
+
+  final String label;
+  final String value;
+  final String unit;
+  final UiBadgeTone tone;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: uiToneSoftColor(tone),
+        borderRadius: BorderRadius.circular(UiRadius.input),
+        border: Border.all(color: uiToneBorderColor(tone)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(label, style: UiText.label.copyWith(color: uiToneColor(tone))),
+          const SizedBox(height: 5),
+          FittedBox(
+            alignment: Alignment.centerLeft,
+            fit: BoxFit.scaleDown,
+            child: Text(
+              '$value $unit',
+              style: UiText.cardTitle.copyWith(fontSize: 18),
+            ),
+          ),
         ],
       ),
     );
@@ -603,7 +1341,6 @@ class _ConfigTile extends StatelessWidget {
     required this.icon,
     required this.title,
     required this.summary,
-    this.summaryContent,
     required this.actionLabel,
     required this.enabled,
     this.onTap,
@@ -612,140 +1349,107 @@ class _ConfigTile extends StatelessWidget {
   final IconData icon;
   final String title;
   final String summary;
-  final Widget? summaryContent;
   final String actionLabel;
   final bool enabled;
   final VoidCallback? onTap;
 
   @override
   Widget build(BuildContext context) {
-    return UiCard(
-      padding: const EdgeInsets.all(UiSpace.card),
-      child: LayoutBuilder(
-        builder: (context, constraints) {
-          final compact = constraints.maxWidth < 560;
-          final content = Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(title, style: UiText.cardTitle),
-                const SizedBox(height: 4),
-                if (summaryContent != null)
-                  summaryContent!
-                else
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 10),
+      child: UiCard(
+        padding: const EdgeInsets.all(UiSpace.card),
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            final compact = constraints.maxWidth < 560;
+            final content = Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(title, style: UiText.cardTitle),
+                  const SizedBox(height: 4),
                   Text(
                     summary,
                     style: UiText.body,
                     maxLines: compact ? 4 : 2,
                     overflow: TextOverflow.ellipsis,
                   ),
-              ],
-            ),
-          );
+                ],
+              ),
+            );
 
-          final actionButton = actionLabel.isEmpty
-              ? null
-              : SizedBox(
-                  width: 104,
-                  height: 38,
-                  child: OutlinedButton(
-                    onPressed: enabled ? onTap : null,
-                    style: uiSecondaryButton(),
-                    child: Text(
-                      actionLabel,
-                      style: const TextStyle(
-                        fontSize: 14,
-                        fontWeight: FontWeight.w600,
+            final actionButton = actionLabel.isEmpty
+                ? null
+                : SizedBox(
+                    width: 104,
+                    height: 40,
+                    child: OutlinedButton(
+                      onPressed: enabled ? onTap : null,
+                      style: uiSecondaryButton(),
+                      child: Text(
+                        actionLabel,
+                        style: const TextStyle(
+                          fontSize: 14,
+                          fontWeight: FontWeight.w600,
+                        ),
                       ),
                     ),
-                  ),
-                );
+                  );
 
-          if (compact) {
-            return Column(
+            if (compact) {
+              return Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Container(
+                        width: 36,
+                        height: 36,
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFEAF4F6),
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                        child: Icon(icon, size: 18, color: UiColors.brand),
+                      ),
+                      const SizedBox(width: 10),
+                      content,
+                    ],
+                  ),
+                  if (actionButton != null) ...[
+                    const SizedBox(height: 10),
+                    Align(
+                      alignment: Alignment.centerRight,
+                      child: actionButton,
+                    ),
+                  ],
+                ],
+              );
+            }
+
+            return Row(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Container(
-                      width: 34,
-                      height: 34,
-                      decoration: BoxDecoration(
-                        color: const Color(0xFFEAF4F6),
-                        borderRadius: BorderRadius.circular(10),
-                      ),
-                      child: Icon(icon, size: 18, color: UiColors.brand),
-                    ),
-                    const SizedBox(width: 10),
-                    content,
-                  ],
-                ),
-                if (actionButton != null) ...[
-                  const SizedBox(height: 10),
-                  Align(
-                    alignment: Alignment.centerRight,
-                    child: actionButton,
+                Container(
+                  width: 36,
+                  height: 36,
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFEAF4F6),
+                    borderRadius: BorderRadius.circular(10),
                   ),
+                  child: Icon(icon, size: 18, color: UiColors.brand),
+                ),
+                const SizedBox(width: 10),
+                content,
+                if (actionButton != null) ...[
+                  const SizedBox(width: 10),
+                  actionButton,
                 ],
               ],
             );
-          }
-
-          return Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Container(
-                width: 34,
-                height: 34,
-                decoration: BoxDecoration(
-                  color: const Color(0xFFEAF4F6),
-                  borderRadius: BorderRadius.circular(10),
-                ),
-                child: Icon(icon, size: 18, color: UiColors.brand),
-              ),
-              const SizedBox(width: 10),
-              content,
-              if (actionButton != null) ...[
-                const SizedBox(width: 10),
-                actionButton,
-              ],
-            ],
-          );
-        },
+          },
+        ),
       ),
-    );
-  }
-}
-
-class _ThresholdSummary extends StatelessWidget {
-  const _ThresholdSummary({
-    required this.warningCritical,
-    required this.basis,
-  });
-
-  final String warningCritical;
-  final String basis;
-
-  @override
-  Widget build(BuildContext context) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          warningCritical,
-          style: UiText.body.copyWith(fontWeight: FontWeight.w500),
-          maxLines: 2,
-          overflow: TextOverflow.ellipsis,
-        ),
-        const SizedBox(height: 3),
-        Text(
-          basis,
-          style: UiText.helper,
-          maxLines: 2,
-          overflow: TextOverflow.ellipsis,
-        ),
-      ],
     );
   }
 }
@@ -821,7 +1525,7 @@ class _ThresholdEditorPage extends StatefulWidget {
   final double min;
   final double max;
   final double step;
-  final void Function(double warning, double critical) onSave;
+  final Future<bool> Function(double warning, double critical) onSave;
 
   @override
   State<_ThresholdEditorPage> createState() => _ThresholdEditorPageState();
@@ -830,6 +1534,7 @@ class _ThresholdEditorPage extends StatefulWidget {
 class _ThresholdEditorPageState extends State<_ThresholdEditorPage> {
   late double _warning;
   late double _critical;
+  bool _saving = false;
 
   @override
   void initState() {
@@ -840,6 +1545,7 @@ class _ThresholdEditorPageState extends State<_ThresholdEditorPage> {
 
   @override
   Widget build(BuildContext context) {
+    final invalid = _critical <= _warning;
     return Scaffold(
       appBar: AppBar(title: Text(widget.title)),
       body: ListView(
@@ -873,6 +1579,11 @@ class _ThresholdEditorPageState extends State<_ThresholdEditorPage> {
             enabled: widget.editable,
             onChanged: (v) => setState(() => _critical = v),
           ),
+          const SizedBox(height: 10),
+          _ThresholdValidationNotice(
+            invalid: invalid,
+            editable: widget.editable,
+          ),
           const SizedBox(height: 20),
           Row(
             children: [
@@ -886,9 +1597,19 @@ class _ThresholdEditorPageState extends State<_ThresholdEditorPage> {
               const SizedBox(width: 10),
               Expanded(
                 child: FilledButton(
-                  onPressed: widget.editable ? _save : null,
+                  onPressed:
+                      widget.editable && !invalid && !_saving ? _save : null,
                   style: uiPrimaryButton(),
-                  child: const Text('Save'),
+                  child: _saving
+                      ? const SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: Colors.white,
+                          ),
+                        )
+                      : const Text('Save'),
                 ),
               ),
             ],
@@ -898,7 +1619,7 @@ class _ThresholdEditorPageState extends State<_ThresholdEditorPage> {
     );
   }
 
-  void _save() {
+  Future<void> _save() async {
     if (_critical <= _warning) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
@@ -907,8 +1628,61 @@ class _ThresholdEditorPageState extends State<_ThresholdEditorPage> {
       );
       return;
     }
-    widget.onSave(_warning, _critical);
-    Navigator.of(context).pop();
+    setState(() => _saving = true);
+    try {
+      final saved = await widget.onSave(_warning, _critical);
+      if (!mounted || !saved) return;
+      Navigator.of(context).pop();
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
+}
+
+class _ThresholdValidationNotice extends StatelessWidget {
+  const _ThresholdValidationNotice({
+    required this.invalid,
+    required this.editable,
+  });
+
+  final bool invalid;
+  final bool editable;
+
+  @override
+  Widget build(BuildContext context) {
+    final tone = invalid ? UiBadgeTone.critical : UiBadgeTone.healthy;
+    final text = invalid
+        ? 'Critical threshold must be higher than warning threshold.'
+        : (editable
+            ? 'Threshold order is valid and ready to save.'
+            : 'Read-only preview; values are locked for this role.');
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        color: uiToneSoftColor(tone),
+        borderRadius: BorderRadius.circular(UiRadius.input),
+        border: Border.all(color: uiToneBorderColor(tone)),
+      ),
+      child: Row(
+        children: [
+          Icon(
+            invalid ? Icons.error_rounded : Icons.check_circle_rounded,
+            size: 18,
+            color: uiToneColor(tone),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              text,
+              style: UiText.helper.copyWith(
+                color: uiToneColor(tone),
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
   }
 }
 
@@ -971,7 +1745,7 @@ class _SiteProfilePage extends StatefulWidget {
   final String name;
   final String description;
   final bool editable;
-  final void Function(String name, String description) onSave;
+  final Future<bool> Function(String name, String description) onSave;
 
   @override
   State<_SiteProfilePage> createState() => _SiteProfilePageState();
@@ -980,6 +1754,7 @@ class _SiteProfilePage extends StatefulWidget {
 class _SiteProfilePageState extends State<_SiteProfilePage> {
   late final TextEditingController _nameController;
   late final TextEditingController _descController;
+  bool _saving = false;
 
   @override
   void initState() {
@@ -1031,9 +1806,18 @@ class _SiteProfilePageState extends State<_SiteProfilePage> {
               const SizedBox(width: 10),
               Expanded(
                 child: FilledButton(
-                  onPressed: widget.editable ? _save : null,
+                  onPressed: widget.editable && !_saving ? _save : null,
                   style: uiPrimaryButton(),
-                  child: const Text('Save'),
+                  child: _saving
+                      ? const SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: Colors.white,
+                          ),
+                        )
+                      : const Text('Save'),
                 ),
               ),
             ],
@@ -1043,7 +1827,7 @@ class _SiteProfilePageState extends State<_SiteProfilePage> {
     );
   }
 
-  void _save() {
+  Future<void> _save() async {
     final name = _nameController.text.trim();
     final description = _descController.text.trim();
     if (name.isEmpty) {
@@ -1052,8 +1836,14 @@ class _SiteProfilePageState extends State<_SiteProfilePage> {
       );
       return;
     }
-    widget.onSave(name, description);
-    Navigator.of(context).pop();
+    setState(() => _saving = true);
+    try {
+      final saved = await widget.onSave(name, description);
+      if (!mounted || !saved) return;
+      Navigator.of(context).pop();
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
   }
 }
 

@@ -4,9 +4,12 @@
 
   # Flutter web runtime config.
   WebPort = 18082
-  Device = "web-server"
+  Device = "chrome"
   EnableWebFcm = $true
-  UseFreshChromeProfile = $true
+  UseFreshChromeProfile = $false
+  # Dev-only: allow alert audio without extra user gesture each session
+  # (effective when Device is chrome/edge).
+  DisableAutoplayGestureRequirement = $true
   ChromeUserDataDir = "F:\\403\\demo\\.chrome_fcm_profile"
   DisableChromeExtensions = $true
 

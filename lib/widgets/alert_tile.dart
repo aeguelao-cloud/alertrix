@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../models/monitoring_models.dart';
+import 'ui_kit.dart';
 
 class AlertTile extends StatelessWidget {
   const AlertTile({
@@ -14,31 +15,35 @@ class AlertTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final tone = item.severity == SensorLevel.critical
+        ? UiBadgeTone.critical
+        : UiBadgeTone.warning;
     return Container(
       margin: const EdgeInsets.only(bottom: 8),
       decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(12),
+        color: UiColors.surface,
+        borderRadius: BorderRadius.circular(UiRadius.card),
+        border:
+            Border.all(color: uiToneBorderColor(tone).withValues(alpha: 0.55)),
       ),
       child: ListTile(
         onTap: onTap,
         leading: CircleAvatar(
           radius: 16,
-          backgroundColor: item.severity.color.withOpacity(0.12),
+          backgroundColor: uiToneSoftColor(tone),
           child: Icon(
             Icons.notification_important_outlined,
-            color: item.severity.color,
+            color: uiToneColor(tone),
             size: 18,
           ),
         ),
-        title: Text(item.title,
-            style: const TextStyle(fontWeight: FontWeight.w600)),
-        subtitle: Text(item.zone),
+        title: Text(item.title, style: UiText.cardTitle),
+        subtitle: Text(item.zone, style: UiText.helper),
         trailing: Text(
           _formatTime(item.timestamp),
           style: const TextStyle(
-            color: Color(0xFF708189),
-            fontWeight: FontWeight.w600,
+            color: UiColors.textMuted,
+            fontWeight: FontWeight.w700,
           ),
         ),
       ),

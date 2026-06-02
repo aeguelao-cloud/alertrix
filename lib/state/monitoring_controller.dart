@@ -5,13 +5,12 @@ import 'package:flutter/foundation.dart';
 import '../models/auth_models.dart';
 import '../models/monitoring_models.dart';
 import '../services/aws_monitoring_api.dart';
-import '../services/fake_monitoring_api.dart';
 import '../services/monitoring_api.dart';
 
 class MonitoringController extends ChangeNotifier {
   MonitoringController({MonitoringApi? api, String? apiBaseUrl})
-      : _api = api ?? _buildApi(apiBaseUrl),
-        _apiBaseUrl = apiBaseUrl;
+      : _apiBaseUrl = _resolveApiBaseUrl(apiBaseUrl),
+        _api = api ?? AwsMonitoringApi(baseUrl: _resolveApiBaseUrl(apiBaseUrl));
 
   final MonitoringApi _api;
   final String? _apiBaseUrl;
@@ -24,6 +23,7 @@ class MonitoringController extends ChangeNotifier {
   int _consecutiveFailures = 0;
   String? _errorMessage;
   Timer? _timer;
+  int _incidentPageDepth = 1;
 
   static const Duration _criticalRefreshInterval = Duration(seconds: 1);
   static const Duration _warningRefreshInterval = Duration(seconds: 2);
@@ -31,21 +31,20 @@ class MonitoringController extends ChangeNotifier {
   static const Duration _baseFailureInterval = Duration(seconds: 6);
   static const Duration _maxFailureInterval = Duration(seconds: 12);
   static const Duration _requestTimeout = Duration(seconds: 5);
+  static const String _defaultApiBaseUrl =
+      'https://b4sm23mlze.execute-api.ap-southeast-5.amazonaws.com/prod';
 
   MonitoringSnapshot? get snapshot => _snapshot;
   DateTime? get lastSuccessfulSyncAt => _lastSuccessfulSyncAt;
   bool get loading => _loading;
   String? get errorMessage => _errorMessage;
   bool get usingRemoteApi => _api is AwsMonitoringApi;
-  String get modeLabel => usingRemoteApi ? 'API' : 'Mock';
+  String get modeLabel => usingRemoteApi ? 'API' : 'No telemetry';
   String? get apiBaseUrl => _apiBaseUrl;
 
-  static MonitoringApi _buildApi(String? apiBaseUrl) {
+  static String _resolveApiBaseUrl(String? apiBaseUrl) {
     final trimmed = (apiBaseUrl ?? '').trim();
-    if (trimmed.isNotEmpty) {
-      return AwsMonitoringApi(baseUrl: trimmed);
-    }
-    return FakeMonitoringApi();
+    return trimmed.isNotEmpty ? trimmed : _defaultApiBaseUrl;
   }
 
   Future<void> initialize() async {
@@ -96,18 +95,21 @@ class MonitoringController extends ChangeNotifier {
     _refreshInFlight = true;
     try {
       _snapshot = await _api
-          .fetchSnapshot(previous: _snapshot)
+          .fetchSnapshot(
+            previous: _snapshot,
+            incidentPages: _incidentPageDepth,
+          )
           .timeout(_requestTimeout);
       _lastSuccessfulSyncAt = _snapshot?.updatedAt ?? DateTime.now();
       _errorMessage = null;
       _consecutiveFailures = 0;
     } on TimeoutException {
       _errorMessage =
-          'Sync timeout from ${usingRemoteApi ? 'API' : 'mock source'}';
+          'Sync timeout from ${usingRemoteApi ? 'API' : 'no telemetry source'}';
       _consecutiveFailures += 1;
     } catch (_) {
       _errorMessage =
-          'Failed to sync from ${usingRemoteApi ? 'API' : 'mock source'}';
+          'Failed to sync from ${usingRemoteApi ? 'API' : 'no telemetry source'}';
       _consecutiveFailures += 1;
     } finally {
       _refreshInFlight = false;
@@ -124,9 +126,38 @@ class MonitoringController extends ChangeNotifier {
     }
   }
 
+  Future<bool> loadMoreActiveIncidents() async {
+    if (!usingRemoteApi) return false;
+    if (_refreshInFlight) return _snapshot?.activeIncidentsHasMore ?? false;
+    final snapshot = _snapshot;
+    if (snapshot == null || !snapshot.activeIncidentsHasMore) {
+      return false;
+    }
+
+    _incidentPageDepth += 1;
+    await _refreshInternal(force: true);
+    if (!_disposed) {
+      _scheduleNextRefresh();
+    }
+    return _snapshot?.activeIncidentsHasMore ?? false;
+  }
+
+  Future<void> resetActiveIncidentPagination() async {
+    if (_incidentPageDepth == 1) return;
+    if (_refreshInFlight) {
+      _incidentPageDepth = 1;
+      return;
+    }
+    _incidentPageDepth = 1;
+    await _refreshInternal(force: true);
+    if (!_disposed) {
+      _scheduleNextRefresh();
+    }
+  }
+
   Future<void> confirmAlert(String alertId, UserRole role) async {
     await _api.updateAlertStatus(
-        alertId: alertId, status: AlertStatus.confirmed, role: role);
+        incidentId: alertId, status: AlertStatus.acknowledged, role: role);
     await manualRefresh();
   }
 
@@ -135,8 +166,8 @@ class MonitoringController extends ChangeNotifier {
     for (final alertId in alertIds) {
       try {
         await _api.updateAlertStatus(
-          alertId: alertId,
-          status: AlertStatus.confirmed,
+          incidentId: alertId,
+          status: AlertStatus.acknowledged,
           role: role,
         );
         successCount += 1;
@@ -150,14 +181,24 @@ class MonitoringController extends ChangeNotifier {
 
   Future<void> ignoreAlert(String alertId, UserRole role) async {
     await _api.updateAlertStatus(
-        alertId: alertId, status: AlertStatus.ignored, role: role);
+        incidentId: alertId, status: AlertStatus.closed, role: role);
+    await manualRefresh();
+  }
+
+  Future<void> resolveAlert(String alertId, UserRole role) async {
+    await _api.updateAlertStatus(
+        incidentId: alertId, status: AlertStatus.resolved, role: role);
     await manualRefresh();
   }
 
   Future<String> createWorkOrder(String alertId, UserRole role) async {
-    final id = await _api.createWorkOrder(alertId: alertId, role: role);
+    final id = await _api.createWorkOrder(incidentId: alertId, role: role);
     await manualRefresh();
     return id;
+  }
+
+  Future<List<IncidentSensorEvent>> fetchIncidentEvents(String incidentId) {
+    return _api.fetchIncidentEvents(incidentId: incidentId, limit: 300);
   }
 
   Future<void> silenceBuzzer({

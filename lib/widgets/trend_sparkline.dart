@@ -256,7 +256,7 @@ class _SparklinePainter extends CustomPainter {
     if (warningThreshold != null) {
       final y = geometry.yForValue(warningThreshold!);
       final warningPaint = Paint()
-        ..color = const Color(0xFFE09D25).withOpacity(0.82)
+        ..color = const Color(0xFFE09D25).withValues(alpha: 0.82)
         ..strokeWidth = 1.2;
       canvas.drawLine(
           Offset(plotRect.left, y), Offset(plotRect.right, y), warningPaint);
@@ -264,7 +264,7 @@ class _SparklinePainter extends CustomPainter {
     if (criticalThreshold != null) {
       final y = geometry.yForValue(criticalThreshold!);
       final criticalPaint = Paint()
-        ..color = const Color(0xFFC93C3C).withOpacity(0.82)
+        ..color = const Color(0xFFC93C3C).withValues(alpha: 0.82)
         ..strokeWidth = 1.2;
       canvas.drawLine(
           Offset(plotRect.left, y), Offset(plotRect.right, y), criticalPaint);
@@ -305,7 +305,10 @@ class _SparklinePainter extends CustomPainter {
       ..shader = LinearGradient(
         begin: Alignment.topCenter,
         end: Alignment.bottomCenter,
-        colors: [color.withOpacity(0.22), color.withOpacity(0.02)],
+        colors: [
+          color.withValues(alpha: 0.22),
+          color.withValues(alpha: 0.02),
+        ],
       ).createShader(plotRect);
 
     final linePaint = Paint()

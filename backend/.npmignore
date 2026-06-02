@@ -1,7 +1,12 @@
 .aws-sam/
+.aws-sam-in-source/
 .aws-sam-build/
+.aws-sam-build-*/
+.sam_build*/
+.sam_build_debug/
 .sam_build_new/
 .sam_cache_new/
 _lambda_patch_tmp/
+node_modules/
 admin_patch.zip
 events-*.json

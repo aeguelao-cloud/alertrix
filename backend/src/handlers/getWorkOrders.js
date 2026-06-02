@@ -8,6 +8,7 @@ exports.handler = async (event) => {
   try {
     const status = event.queryStringParameters?.status;
     const alertId = event.queryStringParameters?.alertId;
+    const incidentId = event.queryStringParameters?.incidentId;
     const limitRaw = event.queryStringParameters?.limit;
     const limit = Math.max(1, Math.min(parseInt(limitRaw || "100", 10) || 100, 500));
 
@@ -25,6 +26,9 @@ exports.handler = async (event) => {
     if (alertId) {
       items = items.filter((item) => (item.alertId || "").toString().includes(alertId));
     }
+    if (incidentId) {
+      items = items.filter((item) => (item.incidentId || "").toString().includes(incidentId));
+    }
 
     items.sort((a, b) => ((a.createdAt || "") < (b.createdAt || "") ? 1 : -1));
     items = items.slice(0, limit);
@@ -35,4 +39,3 @@ exports.handler = async (event) => {
     return serverError("Failed to load work orders");
   }
 };
-

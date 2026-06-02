@@ -34,39 +34,63 @@ class _AdminManagementPageState extends State<AdminManagementPage> {
 
   @override
   Widget build(BuildContext context) {
+    final compact = uiIsCompactLayout(context);
     final activeCount = _items.where((item) => item.status == 'active').length;
     final inactiveCount = _items.length - activeCount;
+    final actionButtons = Wrap(
+      spacing: 8,
+      runSpacing: 8,
+      children: [
+        FilledButton.icon(
+          onPressed: _loading ? null : _openCreateDialog,
+          style: uiPrimaryButton(),
+          icon: const Icon(Icons.person_add_alt_1),
+          label: const Text('Invite Admin'),
+        ),
+        IconButton(
+          onPressed: _loading ? null : _loadAdmins,
+          tooltip: 'Refresh',
+          icon: const Icon(Icons.refresh_rounded),
+        ),
+      ],
+    );
 
     return ListView(
-      padding: const EdgeInsets.all(UiSpace.page),
+      padding: uiPagePadding(context),
       children: [
         UiPageHeader(
           systemName: 'Alertrix',
           title: 'Admin Management',
           subtitle:
-              '$activeCount active admin\nEmail notifications are sent to active administrators only',
-          trailing: Wrap(
-            spacing: 8,
-            children: [
-              FilledButton.icon(
-                onPressed: _loading ? null : _openCreateDialog,
-                style: uiPrimaryButton(),
-                icon: const Icon(Icons.person_add_alt_1),
-                label: const Text('Add Admin'),
-              ),
-              IconButton(
-                onPressed: _loading ? null : _loadAdmins,
-                tooltip: 'Refresh',
-                icon: const Icon(Icons.refresh_rounded),
-              ),
-            ],
-          ),
+              '$activeCount active admin\nAt least one active administrator must remain in the system.',
+          trailing: compact ? null : actionButtons,
         ),
+        if (compact) ...[
+          const SizedBox(height: 10),
+          actionButtons,
+        ],
         const SizedBox(height: UiSpace.section),
         _AdminSummaryRow(
           total: _items.length,
           active: activeCount,
           inactive: inactiveCount,
+        ),
+        const SizedBox(height: 12),
+        const UiCard(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Security guardrails',
+                style: UiText.cardTitle,
+              ),
+              SizedBox(height: 6),
+              Text(
+                '- Cannot delete yourself.\n- Cannot delete or deactivate the last active admin.\n- Deactivate is preferred over delete.\n- New admins should be added by invitation or verified email.',
+                style: UiText.helper,
+              ),
+            ],
+          ),
         ),
         if (_error != null) ...[
           const SizedBox(height: 12),
@@ -100,11 +124,12 @@ class _AdminManagementPageState extends State<AdminManagementPage> {
             child: UiEmptyState(
               icon: Icons.admin_panel_settings_outlined,
               title: 'No admins yet',
-              subtitle: 'Click Add Admin to create the first admin recipient.',
+              subtitle:
+                  'Click Invite Admin to create the first admin recipient.',
               primaryAction: FilledButton(
                 onPressed: _loading ? null : _openCreateDialog,
                 style: uiPrimaryButton(),
-                child: const Text('Add Admin'),
+                child: const Text('Invite Admin'),
               ),
             ),
           )
@@ -116,6 +141,10 @@ class _AdminManagementPageState extends State<AdminManagementPage> {
 
   Widget _buildAdminCard(AdminItem item) {
     final active = item.status == 'active';
+    final isSelf = _isSelf(item);
+    final lastActive = active && _activeAdminCount() <= 1;
+    final disableDeactivate = active && (isSelf || lastActive);
+    final disableDelete = isSelf || lastActive;
 
     return UiCard(
       big: true,
@@ -138,7 +167,7 @@ class _AdminManagementPageState extends State<AdminManagementPage> {
           Text(item.email, style: UiText.body),
           const SizedBox(height: 8),
           Text(
-            'Role: ${item.role}  ?  Created: ${item.createdAt ?? '—'}  ?  Updated: ${item.updatedAt ?? '—'}',
+            'Role: ${item.role} | Created: ${item.createdAt ?? '--'} | Updated: ${item.updatedAt ?? '--'}',
             style: UiText.helper,
           ),
           const SizedBox(height: 12),
@@ -155,10 +184,12 @@ class _AdminManagementPageState extends State<AdminManagementPage> {
               OutlinedButton.icon(
                 onPressed: _loading
                     ? null
-                    : () => _setStatus(
-                          item: item,
-                          status: active ? 'inactive' : 'active',
-                        ),
+                    : (disableDeactivate
+                        ? null
+                        : () => _setStatus(
+                              item: item,
+                              status: active ? 'inactive' : 'active',
+                            )),
                 style: uiSecondaryButton(),
                 icon: Icon(active
                     ? Icons.pause_circle_outline
@@ -166,16 +197,40 @@ class _AdminManagementPageState extends State<AdminManagementPage> {
                 label: Text(active ? 'Deactivate' : 'Activate'),
               ),
               OutlinedButton.icon(
-                onPressed: _loading ? null : () => _confirmDelete(item),
+                onPressed: _loading || disableDelete
+                    ? null
+                    : () => _confirmDelete(item),
                 style: uiDangerButton(),
                 icon: const Icon(Icons.delete_outline),
                 label: const Text('Delete'),
               ),
             ],
           ),
+          if (isSelf || lastActive) ...[
+            const SizedBox(height: 8),
+            Text(
+              isSelf
+                  ? 'This administrator is your current account and cannot be deleted/deactivated.'
+                  : 'This is the last active administrator. Keep at least one active admin.',
+              style: UiText.helper,
+            ),
+          ],
         ],
       ),
     );
+  }
+
+  int _activeAdminCount() {
+    return _items.where((admin) => admin.status == 'active').length;
+  }
+
+  bool _isSelf(AdminItem item) {
+    final actor = widget.adminHeaderUserId.trim().toLowerCase();
+    final email = item.email.trim().toLowerCase();
+    if (actor == email) return true;
+    final at = email.indexOf('@');
+    if (at > 0 && actor == email.substring(0, at)) return true;
+    return false;
   }
 
   Future<void> _loadAdmins() async {
@@ -244,7 +299,7 @@ class _AdminManagementPageState extends State<AdminManagementPage> {
         return StatefulBuilder(
           builder: (context, setDialogState) {
             return AlertDialog(
-              title: Text(existing == null ? 'Add Admin' : 'Edit Admin'),
+              title: Text(existing == null ? 'Invite Admin' : 'Edit Admin'),
               content: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
@@ -260,7 +315,7 @@ class _AdminManagementPageState extends State<AdminManagementPage> {
                   ),
                   const SizedBox(height: 10),
                   DropdownButtonFormField<String>(
-                    value: role,
+                    initialValue: role,
                     decoration: const InputDecoration(labelText: 'Role'),
                     items: const [
                       DropdownMenuItem(value: 'admin', child: Text('admin')),
@@ -453,9 +508,10 @@ class _AdminSummaryRow extends StatelessWidget {
   Widget build(BuildContext context) {
     return LayoutBuilder(
       builder: (context, constraints) {
+        final singleColumn = uiIsCompactLayout(context);
         final width = constraints.maxWidth >= 980
             ? (constraints.maxWidth - UiSpace.gap * 2) / 3
-            : constraints.maxWidth >= 680
+            : !singleColumn && constraints.maxWidth >= 680
                 ? (constraints.maxWidth - UiSpace.gap) / 2
                 : constraints.maxWidth;
         return Wrap(
@@ -520,8 +576,8 @@ class AdminItem {
   factory AdminItem.fromJson(Map<String, dynamic> json) {
     return AdminItem(
       adminId: json['adminId']?.toString() ?? '',
-      name: json['name']?.toString() ?? '—',
-      email: json['email']?.toString() ?? '—',
+      name: json['name']?.toString() ?? '--',
+      email: json['email']?.toString() ?? '--',
       role: json['role']?.toString() ?? 'admin',
       status: json['status']?.toString() ?? 'inactive',
       createdAt: json['createdAt']?.toString(),

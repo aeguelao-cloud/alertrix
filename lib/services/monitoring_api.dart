@@ -2,19 +2,27 @@ import '../models/auth_models.dart';
 import '../models/monitoring_models.dart';
 
 abstract class MonitoringApi {
-  Future<MonitoringSnapshot> fetchSnapshot({MonitoringSnapshot? previous});
+  Future<MonitoringSnapshot> fetchSnapshot({
+    MonitoringSnapshot? previous,
+    int incidentPages = 1,
+  });
 
   Future<void> updateAlertStatus({
-    required String alertId,
+    required String incidentId,
     required AlertStatus status,
     required UserRole role,
   });
 
   Future<String> createWorkOrder({
-    required String alertId,
+    required String incidentId,
     required UserRole role,
     String assignee = 'Emergency Team',
     String note = 'Generated from alert workflow',
+  });
+
+  Future<List<IncidentSensorEvent>> fetchIncidentEvents({
+    required String incidentId,
+    int limit = 200,
   });
 
   Future<void> silenceBuzzer({
@@ -26,10 +34,10 @@ abstract class MonitoringApi {
 }
 
 enum AlertStatus {
-  open('OPEN'),
-  confirmed('CONFIRMED'),
-  ignored('IGNORED'),
-  workOrderCreated('WORK_ORDER_CREATED');
+  active('ACTIVE'),
+  acknowledged('ACKNOWLEDGED'),
+  resolved('RESOLVED'),
+  closed('CLOSED');
 
   const AlertStatus(this.apiValue);
   final String apiValue;

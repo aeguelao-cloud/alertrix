@@ -81,13 +81,16 @@ Write-Host "Alertrix one-click startup" -ForegroundColor Cyan
 Write-Host "Project: $repoRoot"
 Write-Host "API: $($cfg.ApiBaseUrl)"
 
-$selectedPort = Get-FreeWebPort -PreferredPort ([int]$cfg.WebPort)
-if ($selectedPort -ne [int]$cfg.WebPort) {
-  Write-Host "Preferred port $($cfg.WebPort) is busy, switching to $selectedPort." -ForegroundColor Yellow
+$selectedPort = [int]$cfg.WebPort
+if (Test-PortInUse -Port $selectedPort) {
+  throw "Preferred web port $selectedPort is busy. Close the existing app on this port and retry. Keeping a fixed localhost port prevents repeated browser permission prompts."
 }
 Write-Host "Device: $($cfg.Device)  Port: $selectedPort"
 if ($cfg.Device -eq "web-server") {
   Write-Host "Open URL: http://localhost:$selectedPort/" -ForegroundColor Green
+  if ($cfg.DisableAutoplayGestureRequirement) {
+    Write-Host "Note: DisableAutoplayGestureRequirement works only when Device=chrome/edge (Flutter-launched browser)." -ForegroundColor Yellow
+  }
 }
 Write-Host ""
 
@@ -114,6 +117,9 @@ if ($cfg.Device -eq "web-server") {
 }
 
 if ($cfg.Device -in @("chrome", "edge")) {
+  if ($cfg.DisableAutoplayGestureRequirement) {
+    $args += "--web-browser-flag=--autoplay-policy=no-user-gesture-required"
+  }
   if ($cfg.UseFreshChromeProfile -and $cfg.ChromeUserDataDir) {
     $profilePathEscaped = [Regex]::Escape($cfg.ChromeUserDataDir)
     $lockedBrowserProcs = Get-CimInstance Win32_Process | Where-Object {

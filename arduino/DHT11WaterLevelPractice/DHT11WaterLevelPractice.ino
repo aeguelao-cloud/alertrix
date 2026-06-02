@@ -10,17 +10,20 @@
 
 // ===== Pins (ESP32) =====
 const uint8_t DHT_PIN = 4;
-const uint8_t WATER_SENSOR_AO_PIN = 11;  // connect to AO of red water sensor
+const uint8_t WATER_SENSOR_AO_PIN = 10;  // connect to AO of red water sensor
+const uint8_t VIBRATION_SENSOR_AO_PIN = 1;  // connect to AO of vibration sensor on ESP32-S3 ADC
 const uint8_t BUZZER_PIN = 14;
-const uint8_t ULTRASONIC_TRIG_PIN = 5;
-const uint8_t ULTRASONIC_ECHO_PIN = 6;
 
 #define DHTTYPE DHT11
 DHT dht(DHT_PIN, DHTTYPE);
 
 // ===== Thresholds =====
-const float TEMP_HIGH_C = 35.0f;
-const float WATER_LEVEL_HIGH_PERCENT = 80.0f;
+const float TEMP_WARNING_C = 35.0f;
+const float TEMP_CRITICAL_C = 40.0f;
+const float WATER_LEVEL_WARNING_PERCENT = 70.0f;
+const float WATER_LEVEL_CRITICAL_PERCENT = 85.0f;
+const float VIBRATION_WARNING_LEVEL = 10.0f;
+const float VIBRATION_CRITICAL_LEVEL = 14.0f;
 const float DHT_VALID_TEMP_MIN_C = 10.0f;
 const float DHT_VALID_TEMP_MAX_C = 60.0f;
 const float DHT_VALID_HUM_MIN = 5.0f;
@@ -30,11 +33,18 @@ const int ADC_FAULT_HIGH = 4050;
 const uint8_t ADC_FAULT_CONSECUTIVE = 4;
 
 // ===== Cloud uplink =====
-const char* WIFI_SSID = "HIGHERGROUND";
-const char* WIFI_PASSWORD = "higherground";
+#ifndef WIFI_SSID_SECRET
+#define WIFI_SSID_SECRET "YOUR_WIFI_SSID"
+#endif
+#ifndef WIFI_PASSWORD_SECRET
+#define WIFI_PASSWORD_SECRET "YOUR_WIFI_PASSWORD"
+#endif
+
+const char* WIFI_SSID = WIFI_SSID_SECRET;
+const char* WIFI_PASSWORD = WIFI_PASSWORD_SECRET;
 const char* API_BASE_URL = "https://b4sm23mlze.execute-api.ap-southeast-5.amazonaws.com/prod";
 const char* SITE_ZONE = "Zone A - Pump Station";
-const char* FW_BUILD_ID = "FW_2026_04_26_MQTT_ONLY_HIGHERGROUND";
+const char* FW_BUILD_ID = "FW_2026_05_30_MQTT_REAL_SENSORS_10S_BUZZER_VIB14";
 
 // MQTT first, with optional HTTP fallback if MQTT publish fails.
 const bool USE_MQTT_UPLINK = true;
@@ -52,9 +62,11 @@ const char* AWS_ROOT_CA = MQTT_ROOT_CA;
 const char* AWS_IOT_DEVICE_CERT = MQTT_DEVICE_CERT;
 const char* AWS_IOT_PRIVATE_KEY = MQTT_DEVICE_PRIVATE_KEY;
 
-// Use ultrasonic sensor (Trig/Echo) as vibration channel value for now.
-const bool SEND_VIBRATION_FROM_ULTRASONIC = true;
-const float ULTRASONIC_INVALID_VALUE = -1.0f;
+const int VIBRATION_SAMPLE_COUNT = 120;
+const unsigned long VIBRATION_SAMPLE_DELAY_US = 1000;
+const float VIBRATION_RMS_ADC_PER_UNIT = 12.0f;
+const float VIBRATION_LEVEL_MAX = 20.0f;
+const uint8_t VIBRATION_BASELINE_WINDOWS = 8;
 
 // Calibrate these two values using your own sensor:
 // 1) dryValue: sensor out of water
@@ -75,14 +87,47 @@ unsigned long wifiConnectStartMs = 0;
 unsigned long lastWaterPostMs = 0;
 unsigned long lastTempPostMs = 0;
 unsigned long lastVibrationPostMs = 0;
+int lastVibrationPeakToPeakAdc = 0;
+float lastVibrationRmsAdc = 0.0f;
+float vibrationBaselineRmsAdc = 0.0f;
+
+enum AlertSeverity : uint8_t {
+  ALERT_NONE = 0,
+  ALERT_WARNING = 1,
+  ALERT_CRITICAL = 2,
+};
+
+struct VibrationStats {
+  int peakToPeakAdc;
+  float rmsAdc;
+};
+
+float adcToWaterLevelPercent(int adcValue);
+void printWaterCalibrationStatus();
+VibrationStats readVibrationStats();
+void calibrateVibrationBaseline(uint8_t windows);
+float readVibrationLevel();
+
+int waterCalDryCaptured = -1;
+int waterCalWetCaptured = -1;
 
 const unsigned long WATER_POST_INTERVAL_MS = 1000;
 const unsigned long TEMP_POST_INTERVAL_MS = 2000;
 const unsigned long VIBRATION_POST_INTERVAL_MS = 2000;
 const unsigned long BUZZER_STATE_FETCH_INTERVAL_MS = 1000;
+const unsigned long BUZZER_ALERT_INTERVAL_MS = 30000;
+const unsigned long BUZZER_BEEP_DURATION_MS = 10000;
+const unsigned long BUZZER_WARNING_PATTERN_MS = 2000;
+const unsigned long BUZZER_WARNING_ON_MS = 300;
+const unsigned long BUZZER_CRITICAL_PATTERN_MS = 1000;
+const unsigned long BUZZER_CRITICAL_ON_MS = 120;
+const unsigned long BUZZER_CRITICAL_GAP_MS = 120;
 
 bool cloudBuzzerSilenced = false;
 unsigned long lastBuzzerStateFetchMs = 0;
+unsigned long lastBuzzerBeepStartMs = 0;
+bool buzzerBeepActive = false;
+AlertSeverity lastBuzzerSeverity = ALERT_NONE;
 
 #if defined(ARDUINO_ARCH_ESP32)
 WiFiClientSecure mqttNet;
@@ -99,8 +144,8 @@ bool isValidDhtReading(float tempC, float hum) {
 #if defined(ARDUINO_ARCH_ESP32)
 bool hasWifiConfig() {
   return strlen(WIFI_SSID) > 0 && strlen(WIFI_PASSWORD) > 0 &&
-         strcmp(WIFI_SSID, "cslab") != 0 &&
-         strcmp(WIFI_PASSWORD, "aksesg31") != 0;
+         strcmp(WIFI_SSID, "YOUR_WIFI_SSID") != 0 &&
+         strcmp(WIFI_PASSWORD, "YOUR_WIFI_PASSWORD") != 0;
 }
 
 bool hasHttpConfig() {
@@ -323,6 +368,144 @@ int readWaterAdc() {
   return (int)(sum / samples);
 }
 
+float clampVibrationLevel(float level) {
+  if (level < 0.0f) return 0.0f;
+  if (level > VIBRATION_LEVEL_MAX) return VIBRATION_LEVEL_MAX;
+  return level;
+}
+
+const char* alertSeverityLabel(AlertSeverity severity) {
+  switch (severity) {
+    case ALERT_CRITICAL: return "CRITICAL";
+    case ALERT_WARNING: return "WARNING";
+    case ALERT_NONE:
+    default: return "NORMAL";
+  }
+}
+
+AlertSeverity maxSeverity(AlertSeverity left, AlertSeverity right) {
+  return (left > right) ? left : right;
+}
+
+AlertSeverity severityForValue(float value, float warningThreshold, float criticalThreshold) {
+  if (value >= criticalThreshold) return ALERT_CRITICAL;
+  if (value >= warningThreshold) return ALERT_WARNING;
+  return ALERT_NONE;
+}
+
+void printVibrationCommandHelp() {
+  Serial.println("VIB commands:");
+  Serial.println("  VIB HELP          -> show this help");
+  Serial.println("  VIB ZERO          -> calibrate current still sensor as zero baseline");
+  Serial.println("  VIB STATUS        -> print current real sensor baseline");
+  Serial.println("Water calibration: type WL HELP");
+}
+
+void printWaterCalibrationHelp() {
+  Serial.println("WL calibration commands:");
+  Serial.println("  WL HELP           -> show water calibration help");
+  Serial.println("  WL SAMPLE         -> print current water ADC and WL%");
+  Serial.println("  WL DRY            -> capture DRY point (probe out of water)");
+  Serial.println("  WL WET            -> capture WET point (probe in water)");
+  Serial.println("  WL CAL            -> print suggested dryValue/wetValue");
+  Serial.println("  WL APPLY          -> apply captured DRY/WET now");
+  Serial.println("  WL STATUS         -> show current config and captures");
+}
+
+void handleSerialCommands() {
+  if (!Serial.available()) return;
+  String cmd = Serial.readStringUntil('\n');
+  cmd.trim();
+  if (cmd.length() == 0) return;
+
+  String upper = cmd;
+  upper.toUpperCase();
+
+  if (upper == "VIB HELP") {
+    printVibrationCommandHelp();
+    return;
+  }
+
+  if (upper == "VIB ZERO") {
+    Serial.println("VIB zero calibration: keep the sensor still...");
+    calibrateVibrationBaseline(VIBRATION_BASELINE_WINDOWS);
+    Serial.print("VIB zero baseline RMS_ADC=");
+    Serial.println(vibrationBaselineRmsAdc, 2);
+    return;
+  }
+
+  if (upper == "VIB STATUS") {
+    Serial.print("VIB source=REAL_AO, baseline_rms_adc=");
+    Serial.print(vibrationBaselineRmsAdc, 2);
+    Serial.print(", last_rms_adc=");
+    Serial.print(lastVibrationRmsAdc, 2);
+    Serial.print(", adc_per_unit=");
+    Serial.print(VIBRATION_RMS_ADC_PER_UNIT, 2);
+    Serial.print(", max=");
+    Serial.println(VIBRATION_LEVEL_MAX, 2);
+    return;
+  }
+
+  if (upper == "WL HELP") {
+    printWaterCalibrationHelp();
+    return;
+  }
+
+  if (upper == "WL SAMPLE") {
+    int adc = readWaterAdc();
+    Serial.print("WL sample ADC=");
+    Serial.print(adc);
+    Serial.print(", WL=");
+    Serial.print(adcToWaterLevelPercent(adc), 2);
+    Serial.println("%");
+    return;
+  }
+
+  if (upper == "WL DRY") {
+    waterCalDryCaptured = readWaterAdc();
+    Serial.print("Captured WL DRY ADC=");
+    Serial.println(waterCalDryCaptured);
+    printWaterCalibrationStatus();
+    return;
+  }
+
+  if (upper == "WL WET") {
+    waterCalWetCaptured = readWaterAdc();
+    Serial.print("Captured WL WET ADC=");
+    Serial.println(waterCalWetCaptured);
+    printWaterCalibrationStatus();
+    return;
+  }
+
+  if (upper == "WL CAL" || upper == "WL STATUS") {
+    printWaterCalibrationStatus();
+    return;
+  }
+
+  if (upper == "WL APPLY") {
+    if (waterCalDryCaptured < 0 || waterCalWetCaptured < 0) {
+      Serial.println("WL APPLY failed: capture both points first (WL DRY + WL WET).");
+      return;
+    }
+    if (waterCalWetCaptured <= waterCalDryCaptured) {
+      Serial.println("WL APPLY failed: WET ADC must be greater than DRY ADC.");
+      Serial.println("Check wiring/sensor direction and capture again.");
+      return;
+    }
+    dryValue = waterCalDryCaptured;
+    wetValue = waterCalWetCaptured;
+    Serial.print("WL applied: dryValue=");
+    Serial.print(dryValue);
+    Serial.print(", wetValue=");
+    Serial.println(wetValue);
+    return;
+  }
+
+  Serial.print("Unknown command: ");
+  Serial.println(cmd);
+  Serial.println("Type VIB HELP or WL HELP for available commands.");
+}
+
 float adcToWaterLevelPercent(int adcValue) {
   if (wetValue == dryValue) return 0.0f;
   float percent = (float)(adcValue - dryValue) * 100.0f / (float)(wetValue - dryValue);
@@ -331,16 +514,143 @@ float adcToWaterLevelPercent(int adcValue) {
   return percent;
 }
 
-float readUltrasonicDistanceCm() {
-  digitalWrite(ULTRASONIC_TRIG_PIN, LOW);
-  delayMicroseconds(2);
-  digitalWrite(ULTRASONIC_TRIG_PIN, HIGH);
-  delayMicroseconds(10);
-  digitalWrite(ULTRASONIC_TRIG_PIN, LOW);
+void printWaterCalibrationStatus() {
+  Serial.print("WL config dryValue=");
+  Serial.print(dryValue);
+  Serial.print(", wetValue=");
+  Serial.print(wetValue);
+  Serial.print(", delta=");
+  Serial.println(wetValue - dryValue);
 
-  const unsigned long durationUs = pulseIn(ULTRASONIC_ECHO_PIN, HIGH, 30000UL);
-  if (durationUs == 0) return ULTRASONIC_INVALID_VALUE;
-  return (float)durationUs * 0.0343f / 2.0f;
+  Serial.print("WL captured dry=");
+  Serial.print(waterCalDryCaptured);
+  Serial.print(", wet=");
+  Serial.println(waterCalWetCaptured);
+
+  if (waterCalDryCaptured < 0 || waterCalWetCaptured < 0) {
+    Serial.println("To calibrate: run WL DRY, then WL WET, then WL CAL.");
+    return;
+  }
+
+  if (waterCalWetCaptured <= waterCalDryCaptured) {
+    Serial.println("Captured values invalid: wet must be greater than dry.");
+    return;
+  }
+
+  Serial.println("Suggested code values:");
+  Serial.print("  int dryValue = ");
+  Serial.print(waterCalDryCaptured);
+  Serial.println(";");
+  Serial.print("  int wetValue = ");
+  Serial.print(waterCalWetCaptured);
+  Serial.println(";");
+  Serial.println("Use WL APPLY to test immediately without reflashing.");
+}
+
+VibrationStats readVibrationStats() {
+  int minValue = 4095;
+  int maxValue = 0;
+  long sum = 0;
+  int samples[VIBRATION_SAMPLE_COUNT];
+
+  for (int i = 0; i < VIBRATION_SAMPLE_COUNT; i++) {
+    const int value = analogRead(VIBRATION_SENSOR_AO_PIN);
+    samples[i] = value;
+    sum += value;
+    if (value < minValue) minValue = value;
+    if (value > maxValue) maxValue = value;
+    delayMicroseconds(VIBRATION_SAMPLE_DELAY_US);
+  }
+
+  const float mean = (float)sum / (float)VIBRATION_SAMPLE_COUNT;
+  float squareSum = 0.0f;
+  for (int i = 0; i < VIBRATION_SAMPLE_COUNT; i++) {
+    const float centered = (float)samples[i] - mean;
+    squareSum += centered * centered;
+  }
+
+  VibrationStats stats;
+  stats.peakToPeakAdc = maxValue - minValue;
+  stats.rmsAdc = sqrt(squareSum / (float)VIBRATION_SAMPLE_COUNT);
+  return stats;
+}
+
+void calibrateVibrationBaseline(uint8_t windows) {
+  if (windows == 0) windows = 1;
+  float sum = 0.0f;
+  for (uint8_t i = 0; i < windows; i++) {
+    VibrationStats stats = readVibrationStats();
+    sum += stats.rmsAdc;
+  }
+  vibrationBaselineRmsAdc = sum / (float)windows;
+}
+
+float readVibrationLevel() {
+  VibrationStats stats = readVibrationStats();
+  lastVibrationPeakToPeakAdc = stats.peakToPeakAdc;
+  lastVibrationRmsAdc = stats.rmsAdc;
+
+  const float dynamicRmsAdc = stats.rmsAdc - vibrationBaselineRmsAdc;
+  if (dynamicRmsAdc <= 0.0f) return 0.0f;
+
+  const float level = dynamicRmsAdc / VIBRATION_RMS_ADC_PER_UNIT;
+  return clampVibrationLevel(level);
+}
+
+bool buzzerPulseOn(AlertSeverity severity, unsigned long elapsedMs) {
+  if (severity == ALERT_WARNING) {
+    return (elapsedMs % BUZZER_WARNING_PATTERN_MS) < BUZZER_WARNING_ON_MS;
+  }
+
+  if (severity == ALERT_CRITICAL) {
+    const unsigned long phase = elapsedMs % BUZZER_CRITICAL_PATTERN_MS;
+    const unsigned long secondStart = BUZZER_CRITICAL_ON_MS + BUZZER_CRITICAL_GAP_MS;
+    const unsigned long thirdStart = secondStart + BUZZER_CRITICAL_ON_MS + BUZZER_CRITICAL_GAP_MS;
+    return phase < BUZZER_CRITICAL_ON_MS ||
+           (phase >= secondStart && phase < secondStart + BUZZER_CRITICAL_ON_MS) ||
+           (phase >= thirdStart && phase < thirdStart + BUZZER_CRITICAL_ON_MS);
+  }
+
+  return false;
+}
+
+bool updateBuzzer(AlertSeverity severity, unsigned long now) {
+  if (severity == ALERT_NONE) {
+    buzzerBeepActive = false;
+    lastBuzzerBeepStartMs = 0;
+    lastBuzzerSeverity = ALERT_NONE;
+    digitalWrite(BUZZER_PIN, LOW);
+    return false;
+  }
+
+  if (severity != lastBuzzerSeverity) {
+    buzzerBeepActive = false;
+    lastBuzzerBeepStartMs = 0;
+    lastBuzzerSeverity = severity;
+  }
+
+  if (buzzerBeepActive) {
+    if (now - lastBuzzerBeepStartMs >= BUZZER_BEEP_DURATION_MS) {
+      buzzerBeepActive = false;
+      digitalWrite(BUZZER_PIN, LOW);
+      return false;
+    }
+    const bool pulseOn = buzzerPulseOn(severity, now - lastBuzzerBeepStartMs);
+    digitalWrite(BUZZER_PIN, pulseOn ? HIGH : LOW);
+    return pulseOn;
+  }
+
+  if (lastBuzzerBeepStartMs == 0 ||
+      now - lastBuzzerBeepStartMs >= BUZZER_ALERT_INTERVAL_MS) {
+    buzzerBeepActive = true;
+    lastBuzzerBeepStartMs = now;
+    const bool pulseOn = buzzerPulseOn(severity, 0);
+    digitalWrite(BUZZER_PIN, pulseOn ? HIGH : LOW);
+    return pulseOn;
+  }
+
+  digitalWrite(BUZZER_PIN, LOW);
+  return false;
 }
 
 void setup() {
@@ -349,14 +659,14 @@ void setup() {
   delay(2000);  // DHT11 startup stabilization
 
   pinMode(WATER_SENSOR_AO_PIN, INPUT);
+  pinMode(VIBRATION_SENSOR_AO_PIN, INPUT);
   pinMode(BUZZER_PIN, OUTPUT);
-  pinMode(ULTRASONIC_TRIG_PIN, OUTPUT);
-  pinMode(ULTRASONIC_ECHO_PIN, INPUT);
   digitalWrite(BUZZER_PIN, LOW);
 
 #if defined(ARDUINO_ARCH_ESP32)
   analogReadResolution(12);  // 0..4095
   analogSetPinAttenuation(WATER_SENSOR_AO_PIN, ADC_11db);
+  analogSetPinAttenuation(VIBRATION_SENSOR_AO_PIN, ADC_11db);
 #endif
 
   Serial.println("DHT11 + Water Level + Buzzer practice started.");
@@ -364,7 +674,18 @@ void setup() {
   Serial.println(FW_BUILD_ID);
   Serial.print("FW WIFI_SSID=");
   Serial.println(WIFI_SSID);
-  Serial.println("Format: T=xx.x,H=yy.y,ADC=zzzz,WL=pp.pp,ALARM=ON/OFF,ADC_FAULT=n,STATUS=text");
+  Serial.println("Format: T=xx.x,H=yy.y,ADC=zzzz,WL=pp.pp,VIB=n.nn,VIB_RMS_ADC=n.nn,VIB_ADC_PP=n,VIB_BASE_ADC=n.nn,VIB_SOURCE=text,SEVERITY=text,ALARM=ON/OFF,BUZZER=ON/OFF,ADC_FAULT=n,STATUS=text");
+  Serial.println("VIB is a calibrated vibration RMS index from the AO signal on GPIO1.");
+  Serial.print("VIB adc_per_unit=");
+  Serial.print(VIBRATION_RMS_ADC_PER_UNIT, 2);
+  Serial.print(", VIB max=");
+  Serial.println(VIBRATION_LEVEL_MAX, 2);
+  Serial.println("Keep the vibration sensor still for baseline calibration...");
+  calibrateVibrationBaseline(VIBRATION_BASELINE_WINDOWS);
+  Serial.print("VIB baseline RMS_ADC=");
+  Serial.println(vibrationBaselineRmsAdc, 2);
+  Serial.println("Vibration commands: VIB HELP / VIB ZERO / VIB STATUS");
+  Serial.println("Water calibration: WL HELP / WL DRY / WL WET / WL CAL / WL APPLY");
   Serial.println("Tip: if DHT stays nan, try DHT data pin on GPIO6/7 and keep common GND.");
 
 #if defined(ARDUINO_ARCH_ESP32)
@@ -388,6 +709,8 @@ void setup() {
 }
 
 void loop() {
+  handleSerialCommands();
+
   unsigned long now = millis();
   if (now - lastWaterReadMs < WATER_READ_INTERVAL_MS) return;
   lastWaterReadMs = now;
@@ -411,7 +734,7 @@ void loop() {
   float hum = lastHum;
   int waterAdc = readWaterAdc();
   float waterLevelPercent = adcToWaterLevelPercent(waterAdc);
-  float ultrasonicDistanceCm = readUltrasonicDistanceCm();
+  float vibrationLevel = readVibrationLevel();
   const bool waterAdcOutOfRange = (waterAdc < ADC_FAULT_LOW || waterAdc > ADC_FAULT_HIGH);
   if (waterAdcOutOfRange) {
     if (waterAdcFaultCount < 255) waterAdcFaultCount++;
@@ -420,9 +743,17 @@ void loop() {
   }
   const bool waterAdcFault = waterAdcFaultCount >= ADC_FAULT_CONSECUTIVE;
 
-  bool tempBad = !isnan(tempC) && tempC >= TEMP_HIGH_C;
-  bool waterBad = !waterAdcFault && waterLevelPercent >= WATER_LEVEL_HIGH_PERCENT;
-  bool alarm = tempBad || waterBad;
+  const AlertSeverity tempSeverity = isnan(tempC)
+      ? ALERT_NONE
+      : severityForValue(tempC, TEMP_WARNING_C, TEMP_CRITICAL_C);
+  const AlertSeverity waterSeverity = waterAdcFault
+      ? ALERT_NONE
+      : severityForValue(waterLevelPercent, WATER_LEVEL_WARNING_PERCENT, WATER_LEVEL_CRITICAL_PERCENT);
+  const AlertSeverity vibrationSeverity =
+      severityForValue(vibrationLevel, VIBRATION_WARNING_LEVEL, VIBRATION_CRITICAL_LEVEL);
+  const AlertSeverity alertSeverity =
+      maxSeverity(tempSeverity, maxSeverity(waterSeverity, vibrationSeverity));
+  const bool alarm = alertSeverity != ALERT_NONE;
 
 #if defined(ARDUINO_ARCH_ESP32)
   if (hasWifiConfig() && hasHttpConfig() &&
@@ -432,8 +763,8 @@ void loop() {
   }
 #endif
 
-  const bool buzzerActive = alarm && !cloudBuzzerSilenced;
-  digitalWrite(BUZZER_PIN, buzzerActive ? HIGH : LOW);
+  const AlertSeverity buzzerSeverity = cloudBuzzerSilenced ? ALERT_NONE : alertSeverity;
+  const bool buzzerOutputOn = updateBuzzer(buzzerSeverity, now);
 
   Serial.print("T=");
   if (isnan(tempC)) Serial.print("nan"); else Serial.print(tempC, 1);
@@ -443,10 +774,21 @@ void loop() {
   Serial.print(waterAdc);
   Serial.print(",WL=");
   if (waterLevelPercent < 0) Serial.print("nan"); else Serial.print(waterLevelPercent, 2);
-  Serial.print(",US_CM=");
-  if (ultrasonicDistanceCm < 0) Serial.print("nan"); else Serial.print(ultrasonicDistanceCm, 1);
+  Serial.print(",VIB=");
+  Serial.print(vibrationLevel, 2);
+  Serial.print(",VIB_RMS_ADC=");
+  Serial.print(lastVibrationRmsAdc, 2);
+  Serial.print(",VIB_ADC_PP=");
+  Serial.print(lastVibrationPeakToPeakAdc);
+  Serial.print(",VIB_BASE_ADC=");
+  Serial.print(vibrationBaselineRmsAdc, 2);
+  Serial.print(",VIB_SOURCE=REAL_AO");
+  Serial.print(",SEVERITY=");
+  Serial.print(alertSeverityLabel(alertSeverity));
   Serial.print(",ALARM=");
   Serial.print(alarm ? "ON" : "OFF");
+  Serial.print(",BUZZER=");
+  Serial.print(buzzerOutputOn ? "ON" : "OFF");
   Serial.print(",ADC_FAULT=");
   Serial.print(waterAdcFaultCount);
   Serial.print(",CLOUD_SILENCE=");
@@ -479,10 +821,8 @@ void loop() {
       }
     }
 
-    if (SEND_VIBRATION_FROM_ULTRASONIC &&
-        ultrasonicDistanceCm >= 0 &&
-        (now - lastVibrationPostMs >= VIBRATION_POST_INTERVAL_MS)) {
-      if (sendReadingToCloud("vibration", ultrasonicDistanceCm)) {
+    if (now - lastVibrationPostMs >= VIBRATION_POST_INTERVAL_MS) {
+      if (sendReadingToCloud("vibration", vibrationLevel)) {
         lastVibrationPostMs = now;
       }
     }

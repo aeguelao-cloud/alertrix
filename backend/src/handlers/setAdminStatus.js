@@ -2,7 +2,7 @@
 
 const { badRequest, notFound, ok, serverError } = require("../common/response");
 const { ensureSuperAdminRequest } = require("../common/adminAuth");
-const { updateAdmin } = require("../common/admins");
+const { updateAdmin, getAdminById, listAdmins } = require("../common/admins");
 
 exports.handler = async (event) => {
   try {
@@ -18,6 +18,19 @@ exports.handler = async (event) => {
       return badRequest("status must be active or inactive");
     }
 
+    const target = await getAdminById(adminId);
+    if (!target) return notFound("Admin not found");
+    if (status === "inactive" && isActorTarget(gate.actor, target.email)) {
+      return badRequest("Cannot deactivate yourself.");
+    }
+    if (status === "inactive") {
+      const allAdmins = await listAdmins();
+      const activeCount = allAdmins.filter((item) => String(item.status || "").toLowerCase() === "active").length;
+      if (String(target.status || "").toLowerCase() === "active" && activeCount <= 1) {
+        return badRequest("Cannot deactivate the last active admin.");
+      }
+    }
+
     const item = await updateAdmin(adminId, { status }, gate.actor);
     if (!item) return notFound("Admin not found");
 
@@ -30,3 +43,12 @@ exports.handler = async (event) => {
     return serverError("Failed to update admin status");
   }
 };
+
+function isActorTarget(actor, email) {
+  const a = String(actor || "").trim().toLowerCase();
+  const e = String(email || "").trim().toLowerCase();
+  if (!a || !e) return false;
+  if (a === e) return true;
+  const at = e.indexOf("@");
+  return at > 0 && a === e.slice(0, at);
+}

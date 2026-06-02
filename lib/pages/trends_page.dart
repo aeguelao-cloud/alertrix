@@ -78,6 +78,10 @@ class _TrendsPageState extends State<TrendsPage> {
     final minIndex = _indexOfMin(selectedSeries);
 
     final latest = hasData ? selectedSeries.last : selectedReading?.value;
+    final selectedTone =
+        _toneForReading(selectedReading?.level, latest, _selectedMetric);
+    final selectedStatus =
+        _statusLabel(selectedReading?.level, latest, _selectedMetric);
     final average = hasData
         ? selectedSeries.reduce((a, b) => a + b) / selectedSeries.length
         : selectedReading?.value;
@@ -113,11 +117,24 @@ class _TrendsPageState extends State<TrendsPage> {
           subtitle: 'Cloud telemetry trend view by metric and time range.',
         ),
         SizedBox(height: sectionSpace),
+        _TrendOpsBanner(
+          metric: _selectedMetric,
+          status: selectedStatus,
+          tone: selectedTone,
+          latestValue: latest,
+          latestTime: latestTime,
+          selectedRange: _selectedRange,
+          usingRemote: _useRemote,
+          loadingRemote: _loadingRemote,
+          remoteError: _remoteError,
+        ),
+        SizedBox(height: sectionSpace),
         UiCard(
           padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 18),
           child: LayoutBuilder(
             builder: (context, constraints) {
-              final stacked = constraints.maxWidth < 760;
+              final stacked =
+                  uiIsCompactLayout(context) || constraints.maxWidth < 760;
               final metricField = _FilterDropdown<SensorType>(
                 title: 'Metric',
                 value: _selectedMetric,
@@ -140,7 +157,13 @@ class _TrendsPageState extends State<TrendsPage> {
 
               if (stacked) {
                 return Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
+                    const Text(
+                      'Filter metric and range to inspect response trends.',
+                      style: UiText.helper,
+                    ),
+                    const SizedBox(height: 8),
                     metricField,
                     const SizedBox(height: 12),
                     rangeField,
@@ -149,11 +172,15 @@ class _TrendsPageState extends State<TrendsPage> {
               }
               return Row(
                 children: [
-                  const Expanded(child: SizedBox()),
+                  const Expanded(
+                    child: Text(
+                      'Filter metric and range to inspect response trends.',
+                      style: UiText.helper,
+                    ),
+                  ),
                   Expanded(flex: 5, child: metricField),
                   const SizedBox(width: 16),
                   Expanded(flex: 5, child: rangeField),
-                  const Expanded(child: SizedBox()),
                 ],
               );
             },
@@ -194,8 +221,9 @@ class _TrendsPageState extends State<TrendsPage> {
                   padding:
                       const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
                   decoration: BoxDecoration(
-                    color: const Color(0xFFFFF3E7),
+                    color: const Color(0xFFFFECEC),
                     borderRadius: BorderRadius.circular(UiRadius.input),
+                    border: Border.all(color: const Color(0xFFF3B0B0)),
                   ),
                   child: Text(_remoteError!, style: UiText.helper),
                 ),
@@ -210,7 +238,7 @@ class _TrendsPageState extends State<TrendsPage> {
                     borderRadius: BorderRadius.circular(UiRadius.input),
                   ),
                   child: const Text(
-                    'Latest cloud data may be stale due to device communication loss.',
+                    'Cloud trend may be stale due to device communication loss.',
                     style: UiText.helper,
                   ),
                 ),
@@ -319,9 +347,10 @@ class _TrendsPageState extends State<TrendsPage> {
         const SizedBox(height: 10),
         LayoutBuilder(
           builder: (context, constraints) {
+            final singleColumn = uiIsCompactLayout(context);
             final cardWidth = constraints.maxWidth >= 1200
                 ? (constraints.maxWidth - UiSpace.gap * 2) / 3
-                : constraints.maxWidth >= 760
+                : !singleColumn && constraints.maxWidth >= 760
                     ? (constraints.maxWidth - UiSpace.gap) / 2
                     : constraints.maxWidth;
             return Wrap(
@@ -468,6 +497,7 @@ class _TrendsPageState extends State<TrendsPage> {
       value: value,
       level: _levelFor(type, value),
       delta: base?.delta ?? 0,
+      capturedAt: base?.capturedAt ?? widget.snapshot.updatedAt,
     );
   }
 
@@ -620,7 +650,7 @@ class _TrendsPageState extends State<TrendsPage> {
       case SensorType.vibration:
         return 'Warning threshold: 2.8 mm/s RMS | Critical threshold: 4.0 mm/s RMS';
       case SensorType.temperature:
-        return 'Warning threshold: 35°C | Critical threshold: 40°C';
+        return 'Warning threshold: 35deg C | Critical threshold: 40deg C';
     }
   }
 
@@ -666,7 +696,7 @@ class _TrendsPageState extends State<TrendsPage> {
       case SensorType.vibration:
         return '${value.toStringAsFixed(1)} mm/s RMS';
       case SensorType.temperature:
-        return '${value.toStringAsFixed(1)}°C';
+        return '${value.toStringAsFixed(1)}deg C';
     }
   }
 
@@ -685,6 +715,100 @@ class _TrendPayload {
 
   final List<double> values;
   final List<DateTime> timestamps;
+}
+
+class _TrendOpsBanner extends StatelessWidget {
+  const _TrendOpsBanner({
+    required this.metric,
+    required this.status,
+    required this.tone,
+    required this.latestValue,
+    required this.latestTime,
+    required this.selectedRange,
+    required this.usingRemote,
+    required this.loadingRemote,
+    required this.remoteError,
+  });
+
+  final SensorType metric;
+  final String status;
+  final UiBadgeTone tone;
+  final double? latestValue;
+  final DateTime? latestTime;
+  final String selectedRange;
+  final bool usingRemote;
+  final bool loadingRemote;
+  final String? remoteError;
+
+  @override
+  Widget build(BuildContext context) {
+    final bg = switch (tone) {
+      UiBadgeTone.critical => const Color(0xFFFFECEC),
+      UiBadgeTone.warning => const Color(0xFFFFF5E6),
+      UiBadgeTone.offline => const Color(0xFFF2F4F6),
+      UiBadgeTone.noTelemetry => const Color(0xFFF2F4F6),
+      UiBadgeTone.healthy => const Color(0xFFEAF7EF),
+      UiBadgeTone.stable => const Color(0xFFEAF2F8),
+    };
+    final border = switch (tone) {
+      UiBadgeTone.critical => const Color(0xFFF3B0B0),
+      UiBadgeTone.warning => const Color(0xFFF2D094),
+      UiBadgeTone.offline => const Color(0xFFD7E0E5),
+      UiBadgeTone.noTelemetry => const Color(0xFFD7E0E5),
+      UiBadgeTone.healthy => const Color(0xFFB8DFC4),
+      UiBadgeTone.stable => const Color(0xFFBFD5E6),
+    };
+    final icon = switch (tone) {
+      UiBadgeTone.critical => Icons.crisis_alert_rounded,
+      UiBadgeTone.warning => Icons.warning_amber_rounded,
+      UiBadgeTone.offline => Icons.sensors_off_rounded,
+      UiBadgeTone.noTelemetry => Icons.sensors_off_rounded,
+      UiBadgeTone.healthy => Icons.check_circle_rounded,
+      UiBadgeTone.stable => Icons.timeline_rounded,
+    };
+    final iconColor = switch (tone) {
+      UiBadgeTone.critical => UiColors.danger,
+      UiBadgeTone.warning => UiColors.warning,
+      UiBadgeTone.offline => UiColors.neutral,
+      UiBadgeTone.noTelemetry => UiColors.neutral,
+      UiBadgeTone.healthy => UiColors.healthy,
+      UiBadgeTone.stable => UiColors.brand,
+    };
+    final latestText = latestValue == null
+        ? 'No telemetry'
+        : '${_TrendsPageState._formatSensorValue(latestValue!, metric)}${latestTime == null ? '' : ' at ${formatHm(latestTime!)}'}';
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      decoration: BoxDecoration(
+        color: bg,
+        borderRadius: BorderRadius.circular(UiRadius.card),
+        border: Border.all(color: border),
+      ),
+      child: Row(
+        children: [
+          Icon(icon, color: iconColor),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  '${metric.label} trend status: $status',
+                  style: UiText.cardTitle,
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  'Latest: $latestText | Window: ${rangeWindowLabel(selectedRange)} | Source: ${usingRemote ? 'Cloud API' : 'Local snapshot'}${loadingRemote ? ' | Syncing...' : ''}${remoteError == null ? '' : ' | Sync warning'}',
+                  style: UiText.helper,
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 }
 
 class _FilterDropdown<T> extends StatelessWidget {
@@ -716,7 +840,7 @@ class _FilterDropdown<T> extends StatelessWidget {
         ),
         const SizedBox(height: 5),
         DropdownButtonFormField<T>(
-          value: value,
+          initialValue: value,
           decoration: const InputDecoration(
             isDense: true,
             contentPadding: EdgeInsets.symmetric(horizontal: 14, vertical: 14),

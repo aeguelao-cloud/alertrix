@@ -44,7 +44,7 @@ String displayUnit(SensorType type) {
     case SensorType.vibration:
       return 'mm/s RMS';
     case SensorType.temperature:
-      return '°„C';
+      return 'deg C';
   }
 }
 
@@ -55,7 +55,7 @@ String formatSensorValue(double value, SensorType type) {
     case SensorType.vibration:
       return '${value.toStringAsFixed(1)} mm/s RMS';
     case SensorType.temperature:
-      return '${value.toStringAsFixed(1)}°„C';
+      return '${value.toStringAsFixed(1)}deg C';
   }
 }
 

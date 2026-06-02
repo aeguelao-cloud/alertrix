@@ -11,6 +11,8 @@ const docClient = DynamoDBDocumentClient.from(client, {
 const tables = {
   sensor: process.env.SENSOR_TABLE_NAME,
   alert: process.env.ALERT_TABLE_NAME,
+  incident: process.env.INCIDENT_TABLE_NAME,
+  sensorEvent: process.env.SENSOR_EVENT_TABLE_NAME,
   workOrder: process.env.WORK_ORDER_TABLE_NAME,
   pushToken: process.env.PUSH_TOKEN_TABLE_NAME,
   settings: process.env.SETTINGS_TABLE_NAME,

@@ -3,9 +3,10 @@
 const { QueryCommand } = require("@aws-sdk/lib-dynamodb");
 const { docClient, tables } = require("../common/dynamo");
 const { ok, serverError } = require("../common/response");
+const { getSystemSettings } = require("../common/systemSettings");
 
 const SENSOR_TYPES = ["waterLevel", "vibration", "temperature"];
-const DEFAULT_LIVE_WINDOW_SECONDS = 900;
+const DEFAULT_LIVE_WINDOW_SECONDS = 60;
 
 function parseTimestamp(raw) {
   if (!raw) return null;
@@ -16,6 +17,7 @@ function parseTimestamp(raw) {
 
 exports.handler = async () => {
   try {
+    const systemSettings = await getSystemSettings();
     const latest = [];
     const liveWindowSeconds = Number(process.env.LIVE_WINDOW_SECONDS || DEFAULT_LIVE_WINDOW_SECONDS);
     const now = new Date();
@@ -46,8 +48,9 @@ exports.handler = async () => {
     }
 
     return ok({
-      siteName: "Pilot Monitoring Site",
+      siteName: systemSettings.siteName,
       updatedAt: (freshestCapturedAt || now).toISOString(),
+      liveWindowSeconds,
       readings: latest
     });
   } catch (error) {

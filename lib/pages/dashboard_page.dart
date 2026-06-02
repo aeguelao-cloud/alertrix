@@ -2,6 +2,15 @@ import 'package:flutter/material.dart';
 
 import '../config/metrics_config.dart';
 import '../models/monitoring_models.dart';
+import '../theme/severity_colors.dart';
+import '../utils/relative_time.dart';
+import '../widgets/alert_card.dart';
+import '../widgets/dashboard_layout.dart';
+import '../widgets/device_status_card.dart';
+import '../widgets/incident_zero_state.dart';
+import '../widgets/section_header.dart';
+import '../widgets/sensor_card.dart';
+import '../widgets/status_badge.dart';
 import '../widgets/trend_sparkline.dart';
 import '../widgets/ui_kit.dart';
 
@@ -9,15 +18,21 @@ class DashboardPage extends StatefulWidget {
   const DashboardPage({
     super.key,
     required this.snapshot,
+    required this.isAdminView,
+    required this.alertsLabel,
     required this.onOpenAlertDetail,
     required this.onNavigateToAlerts,
+    required this.onNavigateToDevices,
     required this.onRetrySync,
     required this.syncBusy,
   });
 
   final MonitoringSnapshot snapshot;
+  final bool isAdminView;
+  final String alertsLabel;
   final ValueChanged<AlertEvent> onOpenAlertDetail;
   final VoidCallback onNavigateToAlerts;
+  final VoidCallback onNavigateToDevices;
   final VoidCallback onRetrySync;
   final bool syncBusy;
 
@@ -38,26 +53,51 @@ class _DashboardPageState extends State<DashboardPage> {
     final alerts = snapshot.alerts;
     final readings = snapshot.readings;
     final incidentGroups = _aggregateIncidentGroups(alerts);
+    final overview = snapshot.overview;
 
     final incident = _topIncident(alerts);
-    final criticalCount = incidentGroups
+    final fallbackCriticalCount = incidentGroups
         .where((e) => e.source.severity == SensorLevel.critical)
         .length;
-    final warningCount = incidentGroups
+    final fallbackWarningCount = incidentGroups
         .where((e) => e.source.severity == SensorLevel.warning)
         .length;
-    final openAlerts = incidentGroups.length;
+    final fallbackOpenAlerts = incidentGroups.length;
     final totalAssets = 1 + activeSensorTypes.length;
     final unavailableSensors = activeSensorTypes
         .where((t) => _readingByType(readings, t) == null)
         .length;
     final unavailableAssets =
         readings.isEmpty ? totalAssets : unavailableSensors;
-    final telemetryStatus = unavailableAssets == 0
-        ? 'Healthy'
+    final availableAssets = totalAssets - unavailableAssets;
+    final telemetryCoverage = totalAssets == 0
+        ? 0
+        : ((availableAssets / totalAssets) * 100).round().clamp(0, 100);
+    final fallbackTelemetryStatus = unavailableAssets == 0
+        ? 'Normal'
         : (unavailableAssets < totalAssets
             ? 'Partial / Degraded'
             : 'No Telemetry');
+    final fallbackRiskLabel = incident == null
+        ? 'Stable'
+        : (incident.severity == SensorLevel.critical ? 'Critical' : 'Warning');
+    final fallbackRiskTone = incident == null
+        ? UiBadgeTone.healthy
+        : (incident.severity == SensorLevel.critical
+            ? UiBadgeTone.critical
+            : UiBadgeTone.warning);
+    final criticalCount = overview?.criticalQueue ?? fallbackCriticalCount;
+    final warningCount = overview?.warningQueue ?? fallbackWarningCount;
+    final openAlerts = overview?.activeIncidents ?? fallbackOpenAlerts;
+    final telemetryCoverageValue =
+        overview?.telemetryCoverage ?? telemetryCoverage;
+    final telemetryStatus =
+        _telemetryStatusLabel(overview, fallbackTelemetryStatus);
+    final riskLabel = overview?.currentRiskLabel ?? fallbackRiskLabel;
+    final riskTone = _riskTone(overview, fallbackRiskTone);
+    final systemStatusLabel = _systemStatusLabel(overview, riskLabel);
+    final systemStatusTone = _systemTone(overview, riskTone);
+    final systemStatusIcon = _systemIcon(overview, incident);
     final series =
         _seriesFor(_selectedMetric, snapshot.history, _selectedRange);
 
@@ -67,126 +107,185 @@ class _DashboardPageState extends State<DashboardPage> {
           ? widget.onNavigateToAlerts
           : () => widget.onOpenAlertDetail(incident),
       onNavigateToAlerts: widget.onNavigateToAlerts,
+      alertsLabel: widget.alertsLabel,
     );
-    final assetsCard = _AssetStatusCard(
+    final readingsCard = _RecentReadingsCard(
       readings: readings,
       updatedAt: snapshot.updatedAt,
     );
     final alertsCard = _RecentAlertsCard(
       alerts: alerts,
       onOpen: widget.onOpenAlertDetail,
-      onViewQueue: widget.onNavigateToAlerts,
     );
     final devicesCard = _DeviceOverviewCard(
       key: _deviceSectionKey,
       siteName: snapshot.siteName,
       readings: readings,
       updatedAt: snapshot.updatedAt,
+      onRetrySync: widget.onRetrySync,
+      onOpenIncidentQueue: widget.onNavigateToAlerts,
+      alertsLabel: widget.alertsLabel,
+    );
+    final emergencyBanner = _EmergencyBanner(
+      overview: overview,
+      incident: incident,
+      criticalCount: criticalCount,
+      warningCount: warningCount,
+      alertsLabel: widget.alertsLabel,
+      onOpenDeviceManagement: widget.onNavigateToDevices,
+      onRetrySync: widget.onRetrySync,
+      onOpenIncident: incident == null
+          ? widget.onNavigateToAlerts
+          : () => widget.onOpenAlertDetail(incident),
+      onOpenQueue: widget.onNavigateToAlerts,
+    );
+    final trendsCard = _TrendsCard(
+      selectedMetric: _selectedMetric,
+      selectedRange: _selectedRange,
+      values: series,
+      syncedAt: snapshot.updatedAt,
+      syncBusy: widget.syncBusy,
+      onRetrySync: widget.onRetrySync,
+      onViewDeviceStatus: _scrollToDeviceSection,
+      onMetricChanged: (value) => setState(() => _selectedMetric = value),
+      onRangeChanged: (value) => setState(() => _selectedRange = value),
+    );
+    final sensorSummary = _SensorSummaryGrid(
+      readings: readings,
+      updatedAt: snapshot.updatedAt,
+      siteName: snapshot.siteName,
+      history: snapshot.history,
+      lastSeenBySensor: snapshot.lastSeenBySensor,
+      overview: overview,
     );
 
-    return ListView(
-      padding: uiPagePadding(context),
-      children: [
-        const UiPageHeader(
-          systemName: 'Alertrix',
-          title: 'Response Overview',
-          subtitle: 'Live incident posture and device telemetry status.',
-        ),
-        SizedBox(height: sectionSpace),
-        _SummaryGrid(
-          cards: [
-            _SummaryData(
-              title: 'Current Risk',
-              value: incident == null
-                  ? 'Stable'
-                  : (incident.severity == SensorLevel.critical
-                      ? 'Critical'
-                      : 'Warning'),
-              helper: incident == null
-                  ? 'No active critical incident'
-                  : '${incident.zone} requires attention',
-            ),
-            _SummaryData(
-              title: 'Open Alerts',
-              value: '$openAlerts',
-              helper: '$openAlerts requires acknowledgment',
-            ),
-            _SummaryData(
-              title: 'Critical',
-              value: '$criticalCount',
-              helper: 'Requires immediate response',
-            ),
-            _SummaryData(
-              title: 'Warning',
-              value: '$warningCount',
-              helper: 'Monitor and assess impact',
-            ),
-            _SummaryData(
-              title: 'Telemetry Status',
-              value: telemetryStatus,
-              helper: '$unavailableAssets/$totalAssets sensors unavailable',
-            ),
-            _SummaryData(
-              title: 'Site Health',
-              value: '${unavailableAssets}/$totalAssets',
-              helper: '$unavailableAssets sensors unavailable',
-            ),
-            _SummaryData(
-              title: 'Latest Sync',
-              value: _hhmm(snapshot.updatedAt),
-              helper: 'Cloud connected',
-            ),
-          ],
-        ),
-        SizedBox(height: sectionSpace),
-        if (compact)
-          Column(
-            children: [
-              incidentCard,
+    return DashboardLayout(
+      title: widget.isAdminView ? 'Response Overview' : 'Dashboard',
+      subtitle: widget.isAdminView
+          ? 'Cloud-assisted IoT disaster response command center.'
+          : 'Your alerts, sensors, and emergency guidance at a glance.',
+      trailing: StatusBadge(
+        label: 'System: $systemStatusLabel',
+        tone: systemStatusTone,
+        icon: systemStatusIcon,
+        prominent: true,
+      ),
+      children: compact
+          ? [
+              _CompactInfoFeed(
+                emergencyBanner: emergencyBanner,
+                incidentCard: incidentCard,
+                readingsCard: readingsCard,
+                alertsCard: alertsCard,
+                devicesCard: devicesCard,
+                trendsCard: trendsCard,
+                sensorSummary: sensorSummary,
+                riskLabel: riskLabel,
+                riskTone: riskTone,
+                openAlerts: openAlerts,
+                criticalCount: criticalCount,
+                warningCount: warningCount,
+                telemetryCoverage: telemetryCoverageValue,
+                telemetryStatus: telemetryStatus,
+                latestSync: overview?.latestSync ?? _hhmm(snapshot.updatedAt),
+                telemetryOnline: readings.isNotEmpty,
+              ),
+            ]
+          : [
+              emergencyBanner,
+              SizedBox(height: sectionSpace),
+              _SummaryGrid(
+                cards: [
+                  _SummaryData(
+                    title: 'Current Risk',
+                    value: riskLabel,
+                    helper: overview?.systemStatus ==
+                            DashboardSystemStatus.noTelemetry
+                        ? 'Status: No live telemetry'
+                        : (incident == null
+                            ? 'No active critical incident'
+                            : '${incident.zone} requires attention'),
+                    tone: riskTone,
+                  ),
+                  _SummaryData(
+                    title: 'Active Incidents',
+                    value: '$openAlerts',
+                    helper: '$openAlerts requires acknowledgment',
+                    tone: openAlerts == 0
+                        ? UiBadgeTone.stable
+                        : UiBadgeTone.warning,
+                  ),
+                  _SummaryData(
+                    title: 'Critical Queue',
+                    value: '$criticalCount',
+                    helper: 'Requires immediate response',
+                    tone: criticalCount == 0
+                        ? UiBadgeTone.stable
+                        : UiBadgeTone.critical,
+                  ),
+                  _SummaryData(
+                    title: 'Warning Queue',
+                    value: '$warningCount',
+                    helper: 'Monitor and assess impact',
+                    tone: warningCount == 0
+                        ? UiBadgeTone.stable
+                        : UiBadgeTone.warning,
+                  ),
+                  _SummaryData(
+                    title: 'Telemetry Coverage',
+                    value: '$telemetryCoverageValue%',
+                    helper: '$availableAssets/$totalAssets assets reporting',
+                    tone: overview?.systemStatus ==
+                            DashboardSystemStatus.noTelemetry
+                        ? UiBadgeTone.noTelemetry
+                        : (unavailableAssets == 0
+                            ? UiBadgeTone.healthy
+                            : (unavailableAssets < totalAssets
+                                ? UiBadgeTone.warning
+                                : UiBadgeTone.offline)),
+                  ),
+                  _SummaryData(
+                    title: 'Latest Sync',
+                    value: overview?.latestSync ?? _hhmm(snapshot.updatedAt),
+                    helper: 'Cloud status: $telemetryStatus',
+                    tone: systemStatusTone,
+                  ),
+                ],
+              ),
+              SizedBox(height: sectionSpace),
+              SectionHeader(
+                title: 'Sensor Summary',
+                subtitle:
+                    'Latest water level, vibration, and temperature readings.',
+                icon: Icons.sensors_rounded,
+                trailing: StatusBadge.online(
+                  online: readings.isNotEmpty,
+                  label: readings.isEmpty ? 'No telemetry' : 'Telemetry online',
+                ),
+              ),
               const SizedBox(height: UiSpace.gap),
-              assetsCard,
+              sensorSummary,
+              SizedBox(height: sectionSpace),
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Expanded(flex: 12, child: incidentCard),
+                  const SizedBox(width: UiSpace.gap),
+                  Expanded(flex: 10, child: readingsCard),
+                ],
+              ),
+              SizedBox(height: sectionSpace),
+              trendsCard,
+              SizedBox(height: sectionSpace),
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Expanded(flex: 9, child: alertsCard),
+                  const SizedBox(width: UiSpace.gap),
+                  Expanded(flex: 15, child: devicesCard),
+                ],
+              ),
             ],
-          )
-        else
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Expanded(flex: 12, child: incidentCard),
-              const SizedBox(width: UiSpace.gap),
-              Expanded(flex: 10, child: assetsCard),
-            ],
-          ),
-        SizedBox(height: sectionSpace),
-        _TrendsCard(
-          selectedMetric: _selectedMetric,
-          selectedRange: _selectedRange,
-          values: series,
-          syncedAt: snapshot.updatedAt,
-          syncBusy: widget.syncBusy,
-          onRetrySync: widget.onRetrySync,
-          onViewDeviceStatus: _scrollToDeviceSection,
-          onMetricChanged: (value) => setState(() => _selectedMetric = value),
-          onRangeChanged: (value) => setState(() => _selectedRange = value),
-        ),
-        SizedBox(height: sectionSpace),
-        if (compact)
-          Column(
-            children: [
-              alertsCard,
-              const SizedBox(height: UiSpace.gap),
-              devicesCard,
-            ],
-          )
-        else
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Expanded(flex: 9, child: alertsCard),
-              const SizedBox(width: UiSpace.gap),
-              Expanded(flex: 15, child: devicesCard),
-            ],
-          ),
-      ],
     );
   }
 
@@ -237,6 +336,70 @@ class _DashboardPageState extends State<DashboardPage> {
     final mm = dt.minute.toString().padLeft(2, '0');
     return '$hh:$mm';
   }
+
+  static String _telemetryStatusLabel(
+    DashboardOverview? overview,
+    String fallback,
+  ) {
+    if (overview == null) return fallback;
+    return switch (overview.systemStatus) {
+      DashboardSystemStatus.noTelemetry => 'No Telemetry',
+      DashboardSystemStatus.critical => 'Critical',
+      DashboardSystemStatus.warning => 'Warning',
+      DashboardSystemStatus.normal => 'Normal',
+    };
+  }
+
+  static UiBadgeTone _riskTone(
+    DashboardOverview? overview,
+    UiBadgeTone fallback,
+  ) {
+    if (overview == null) return fallback;
+    return switch (overview.currentRisk.toUpperCase()) {
+      'CRITICAL' => UiBadgeTone.critical,
+      'WARNING' => UiBadgeTone.warning,
+      'NORMAL' => UiBadgeTone.healthy,
+      'UNKNOWN' => UiBadgeTone.noTelemetry,
+      _ => fallback,
+    };
+  }
+
+  static String _systemStatusLabel(
+    DashboardOverview? overview,
+    String riskLabel,
+  ) {
+    if (overview == null) return riskLabel;
+    return overview.systemStatus.label;
+  }
+
+  static UiBadgeTone _systemTone(
+    DashboardOverview? overview,
+    UiBadgeTone fallback,
+  ) {
+    if (overview == null) return fallback;
+    return switch (overview.systemStatus) {
+      DashboardSystemStatus.noTelemetry => UiBadgeTone.noTelemetry,
+      DashboardSystemStatus.critical => UiBadgeTone.critical,
+      DashboardSystemStatus.warning => UiBadgeTone.warning,
+      DashboardSystemStatus.normal => UiBadgeTone.healthy,
+    };
+  }
+
+  static IconData _systemIcon(
+      DashboardOverview? overview, AlertEvent? incident) {
+    if (overview == null) {
+      if (incident == null) return Icons.verified_rounded;
+      return incident.severity == SensorLevel.critical
+          ? Icons.crisis_alert_rounded
+          : Icons.warning_amber_rounded;
+    }
+    return switch (overview.systemStatus) {
+      DashboardSystemStatus.noTelemetry => Icons.cloud_off_rounded,
+      DashboardSystemStatus.critical => Icons.crisis_alert_rounded,
+      DashboardSystemStatus.warning => Icons.warning_amber_rounded,
+      DashboardSystemStatus.normal => Icons.verified_rounded,
+    };
+  }
 }
 
 class _SummaryData {
@@ -244,11 +407,207 @@ class _SummaryData {
     required this.title,
     required this.value,
     required this.helper,
+    required this.tone,
   });
 
   final String title;
   final String value;
   final String helper;
+  final UiBadgeTone tone;
+}
+
+class _CompactInfoFeed extends StatelessWidget {
+  const _CompactInfoFeed({
+    required this.emergencyBanner,
+    required this.incidentCard,
+    required this.readingsCard,
+    required this.alertsCard,
+    required this.devicesCard,
+    required this.trendsCard,
+    required this.sensorSummary,
+    required this.riskLabel,
+    required this.riskTone,
+    required this.openAlerts,
+    required this.criticalCount,
+    required this.warningCount,
+    required this.telemetryCoverage,
+    required this.telemetryStatus,
+    required this.latestSync,
+    required this.telemetryOnline,
+  });
+
+  final Widget emergencyBanner;
+  final Widget incidentCard;
+  final Widget readingsCard;
+  final Widget alertsCard;
+  final Widget devicesCard;
+  final Widget trendsCard;
+  final Widget sensorSummary;
+  final String riskLabel;
+  final UiBadgeTone riskTone;
+  final int openAlerts;
+  final int criticalCount;
+  final int warningCount;
+  final int telemetryCoverage;
+  final String telemetryStatus;
+  final String latestSync;
+  final bool telemetryOnline;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      children: [
+        UiCard(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  const Icon(
+                    Icons.view_stream_rounded,
+                    size: 18,
+                    color: UiColors.brandDark,
+                  ),
+                  const SizedBox(width: 8),
+                  Text(
+                    'Mobile Information Feed',
+                    style: UiText.cardTitle.copyWith(fontSize: 15),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 10),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  _CompactMetricPill(
+                    label: 'Risk',
+                    value: riskLabel,
+                    tone: riskTone,
+                    icon: Icons.health_and_safety_rounded,
+                  ),
+                  _CompactMetricPill(
+                    label: 'Incidents',
+                    value: '$openAlerts',
+                    tone: openAlerts == 0
+                        ? UiBadgeTone.stable
+                        : UiBadgeTone.warning,
+                    icon: Icons.notification_important_rounded,
+                  ),
+                  _CompactMetricPill(
+                    label: 'Critical',
+                    value: '$criticalCount',
+                    tone: criticalCount == 0
+                        ? UiBadgeTone.stable
+                        : UiBadgeTone.critical,
+                    icon: Icons.warning_amber_rounded,
+                  ),
+                  _CompactMetricPill(
+                    label: 'Warnings',
+                    value: '$warningCount',
+                    tone: warningCount == 0
+                        ? UiBadgeTone.stable
+                        : UiBadgeTone.warning,
+                    icon: Icons.report_problem_rounded,
+                  ),
+                  _CompactMetricPill(
+                    label: 'Coverage',
+                    value: '$telemetryCoverage%',
+                    tone: telemetryCoverage >= 90
+                        ? UiBadgeTone.healthy
+                        : (telemetryCoverage >= 55
+                            ? UiBadgeTone.warning
+                            : UiBadgeTone.offline),
+                    icon: Icons.cloud_done_rounded,
+                  ),
+                  _CompactMetricPill(
+                    label: 'Sync',
+                    value: latestSync,
+                    tone: telemetryOnline
+                        ? UiBadgeTone.healthy
+                        : UiBadgeTone.noTelemetry,
+                    icon: Icons.sync_rounded,
+                  ),
+                ],
+              ),
+              const SizedBox(height: 10),
+              Text(
+                'Telemetry: $telemetryStatus',
+                style: UiText.helper,
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: UiSpace.gap),
+        emergencyBanner,
+        const SizedBox(height: UiSpace.gap),
+        SectionHeader(
+          title: 'Sensor Summary',
+          subtitle: 'Card-based stream for core sensor updates.',
+          icon: Icons.sensors_rounded,
+          trailing: StatusBadge.online(
+            online: telemetryOnline,
+            label: telemetryOnline ? 'Telemetry online' : 'No telemetry',
+          ),
+        ),
+        const SizedBox(height: UiSpace.gap),
+        sensorSummary,
+        const SizedBox(height: UiSpace.gap),
+        incidentCard,
+        const SizedBox(height: UiSpace.gap),
+        readingsCard,
+        const SizedBox(height: UiSpace.gap),
+        trendsCard,
+        const SizedBox(height: UiSpace.gap),
+        alertsCard,
+        const SizedBox(height: UiSpace.gap),
+        devicesCard,
+      ],
+    );
+  }
+}
+
+class _CompactMetricPill extends StatelessWidget {
+  const _CompactMetricPill({
+    required this.label,
+    required this.value,
+    required this.tone,
+    required this.icon,
+  });
+
+  final String label;
+  final String value;
+  final UiBadgeTone tone;
+  final IconData icon;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+      decoration: BoxDecoration(
+        color: uiToneSoftColor(tone),
+        borderRadius: BorderRadius.circular(UiRadius.input),
+        border:
+            Border.all(color: uiToneBorderColor(tone).withValues(alpha: 0.75)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 14, color: uiToneColor(tone)),
+          const SizedBox(width: 6),
+          Text(
+            '$label: $value',
+            style: TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w700,
+              color: uiToneColor(tone),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 }
 
 class _SummaryGrid extends StatelessWidget {
@@ -262,9 +621,10 @@ class _SummaryGrid extends StatelessWidget {
     final numberStyle = UiText.bigNumber.copyWith(fontSize: compact ? 26 : 34);
     return LayoutBuilder(
       builder: (context, constraints) {
+        final singleColumn = uiIsCompactLayout(context);
         final width = constraints.maxWidth >= 1200
             ? (constraints.maxWidth - (UiSpace.gap * 3)) / 4
-            : constraints.maxWidth >= 760
+            : !singleColumn && constraints.maxWidth >= 760
                 ? (constraints.maxWidth - UiSpace.gap) / 2
                 : constraints.maxWidth;
         return Wrap(
@@ -285,7 +645,15 @@ class _SummaryGrid extends StatelessWidget {
                         crossAxisAlignment: CrossAxisAlignment.start,
                         mainAxisAlignment: MainAxisAlignment.center,
                         children: [
-                          Text(card.title, style: UiText.helper),
+                          Row(
+                            children: [
+                              _SeverityDot(tone: card.tone),
+                              const SizedBox(width: 6),
+                              Expanded(
+                                child: Text(card.title, style: UiText.helper),
+                              ),
+                            ],
+                          ),
                           SizedBox(height: compact ? 2 : 4),
                           Text(card.value, style: numberStyle),
                           const SizedBox(height: 3),
@@ -308,27 +676,368 @@ class _SummaryGrid extends StatelessWidget {
   }
 }
 
+class _SeverityDot extends StatelessWidget {
+  const _SeverityDot({required this.tone});
+
+  final UiBadgeTone tone;
+
+  @override
+  Widget build(BuildContext context) {
+    final color = switch (tone) {
+      UiBadgeTone.critical => UiColors.danger,
+      UiBadgeTone.warning => UiColors.warning,
+      UiBadgeTone.offline => UiColors.neutral,
+      UiBadgeTone.noTelemetry => UiColors.neutral,
+      UiBadgeTone.healthy => UiColors.healthy,
+      UiBadgeTone.stable => UiColors.brand,
+    };
+    return Container(
+      width: 8,
+      height: 8,
+      decoration: BoxDecoration(
+        color: color,
+        borderRadius: BorderRadius.circular(999),
+      ),
+    );
+  }
+}
+
+class _SensorSummaryGrid extends StatelessWidget {
+  const _SensorSummaryGrid({
+    required this.readings,
+    required this.updatedAt,
+    required this.siteName,
+    required this.history,
+    required this.lastSeenBySensor,
+    required this.overview,
+  });
+
+  final List<SensorReading> readings;
+  final DateTime updatedAt;
+  final String siteName;
+  final Map<SensorType, List<double>> history;
+  final Map<SensorType, DateTime?> lastSeenBySensor;
+  final DashboardOverview? overview;
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final compact = uiIsCompactLayout(context);
+        final width = constraints.maxWidth >= 1180
+            ? (constraints.maxWidth - UiSpace.gap * 2) / 3
+            : (!compact && constraints.maxWidth >= 760
+                ? (constraints.maxWidth - UiSpace.gap) / 2
+                : constraints.maxWidth);
+
+        return Wrap(
+          spacing: UiSpace.gap,
+          runSpacing: UiSpace.gap,
+          children: activeSensorTypes.map((type) {
+            final reading = _find(readings, type);
+            return SizedBox(
+              width: width,
+              child: reading == null
+                  ? _SensorNoTelemetryCard(
+                      type: type,
+                      siteName: siteName,
+                      lastKnownSeries: history[type] ?? const <double>[],
+                      lastSeenAt: lastSeenBySensor[type] ??
+                          overview?.sensorStatus[type]?.lastSeenAt,
+                    )
+                  : SensorCard(
+                      sensor: reading,
+                      updatedAt: updatedAt,
+                      deviceId: _deviceIdForSensor(type),
+                      zone: siteName,
+                    ),
+            );
+          }).toList(growable: false),
+        );
+      },
+    );
+  }
+
+  static SensorReading? _find(List<SensorReading> readings, SensorType type) {
+    for (final reading in readings) {
+      if (reading.type == type) return reading;
+    }
+    return null;
+  }
+}
+
+class _SensorNoTelemetryCard extends StatelessWidget {
+  const _SensorNoTelemetryCard({
+    required this.type,
+    required this.siteName,
+    required this.lastKnownSeries,
+    required this.lastSeenAt,
+  });
+
+  final SensorType type;
+  final String siteName;
+  final List<double> lastKnownSeries;
+  final DateTime? lastSeenAt;
+
+  @override
+  Widget build(BuildContext context) {
+    final color = sensorColorOf(type);
+    final lastKnownReading =
+        lastKnownSeries.isEmpty ? null : lastKnownSeries.last;
+    return UiCard(
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: color.withValues(alpha: 0.12),
+                  borderRadius: BorderRadius.circular(UiRadius.input),
+                ),
+                child: Icon(type.icon, color: color),
+              ),
+              const Spacer(),
+              const StatusBadge(
+                label: 'No live telemetry',
+                tone: UiBadgeTone.noTelemetry,
+                icon: Icons.cloud_off_rounded,
+              ),
+            ],
+          ),
+          const SizedBox(height: 14),
+          Text(type.label, style: UiText.cardTitle),
+          const SizedBox(height: 2),
+          Text('${_deviceIdForSensor(type)} | $siteName', style: UiText.helper),
+          const SizedBox(height: 16),
+          Text(
+            lastKnownReading == null
+                ? '--'
+                : _formatLastKnownValue(lastKnownReading, type),
+            style: UiText.bigNumber.copyWith(fontSize: 34),
+          ),
+          if (lastKnownReading != null) ...[
+            const SizedBox(height: 2),
+            Text(type.unit, style: UiText.helper),
+          ],
+          const SizedBox(height: 12),
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+            decoration: BoxDecoration(
+              color: UiColors.surfaceAlt,
+              borderRadius: BorderRadius.circular(UiRadius.input),
+              border: Border.all(color: UiColors.border),
+            ),
+            child: Text(
+              lastKnownReading == null
+                  ? 'Status: No live telemetry\nLast seen: ${_formatLastSeen(lastSeenAt)}'
+                  : 'Status: No live telemetry\nLast known reading: ${_formatLastKnownValue(lastKnownReading, type)}\nLast seen: ${_formatLastSeen(lastSeenAt)}',
+              style: UiText.helper,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  static String _formatLastKnownValue(double value, SensorType type) {
+    switch (type) {
+      case SensorType.waterLevel:
+        return '${value.toStringAsFixed(2)}%';
+      case SensorType.vibration:
+        return '${value.toStringAsFixed(2)} mm/s RMS';
+      case SensorType.temperature:
+        return '${value.toStringAsFixed(2)}deg C';
+    }
+  }
+
+  static String _formatLastSeen(DateTime? lastSeenAt) {
+    if (lastSeenAt == null) return 'Never';
+    final diff = DateTime.now().difference(lastSeenAt);
+    if (diff.isNegative) return 'Just now';
+    if (diff.inSeconds < 60) return '${diff.inSeconds}s ago';
+    if (diff.inMinutes < 60) return '${diff.inMinutes} min ago';
+    if (diff.inHours < 24) return '${diff.inHours}h ago';
+    return '${diff.inDays}d ago';
+  }
+}
+
+class _EmergencyBanner extends StatelessWidget {
+  const _EmergencyBanner({
+    required this.overview,
+    required this.incident,
+    required this.criticalCount,
+    required this.warningCount,
+    required this.alertsLabel,
+    required this.onOpenDeviceManagement,
+    required this.onRetrySync,
+    required this.onOpenIncident,
+    required this.onOpenQueue,
+  });
+
+  final DashboardOverview? overview;
+  final AlertEvent? incident;
+  final int criticalCount;
+  final int warningCount;
+  final String alertsLabel;
+  final VoidCallback onOpenDeviceManagement;
+  final VoidCallback onRetrySync;
+  final VoidCallback onOpenIncident;
+  final VoidCallback onOpenQueue;
+
+  @override
+  Widget build(BuildContext context) {
+    final systemStatus = overview?.systemStatus;
+    final noTelemetry = systemStatus == DashboardSystemStatus.noTelemetry;
+    final critical = systemStatus == DashboardSystemStatus.critical ||
+        (systemStatus == null && criticalCount > 0);
+    final warningOnly = systemStatus == DashboardSystemStatus.warning ||
+        (systemStatus == null && !critical && warningCount > 0);
+    final tone = noTelemetry
+        ? UiBadgeTone.noTelemetry
+        : (critical
+            ? UiBadgeTone.critical
+            : (warningOnly ? UiBadgeTone.warning : UiBadgeTone.healthy));
+    final bannerColor = switch (tone) {
+      UiBadgeTone.critical => SeverityColors.criticalSoft,
+      UiBadgeTone.warning => SeverityColors.warningSoft,
+      UiBadgeTone.noTelemetry => const Color(0xFFF2F6F8),
+      _ => SeverityColors.normalSoft,
+    };
+    final borderColor = switch (tone) {
+      UiBadgeTone.critical => SeverityColors.criticalBorder,
+      UiBadgeTone.warning => SeverityColors.warningBorder,
+      UiBadgeTone.noTelemetry => const Color(0xFFCBD8DF),
+      _ => SeverityColors.normalBorder,
+    };
+    final banner = overview?.banner;
+    final title = banner?.title ??
+        (critical
+            ? 'Critical incident response required'
+            : (warningOnly
+                ? 'Warning condition detected'
+                : 'System operating normally'));
+    final detail = banner?.message ??
+        (incident == null
+            ? 'No high-priority incident in the queue.'
+            : '${_formatAlertTitle(incident!.title)} in ${incident!.zone} - ${formatIncidentRelativeTime(incident!.timestamp)}');
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      decoration: BoxDecoration(
+        color: bannerColor,
+        borderRadius: BorderRadius.circular(UiRadius.card),
+        border: Border.all(color: borderColor),
+      ),
+      child: Wrap(
+        runSpacing: 10,
+        alignment: WrapAlignment.spaceBetween,
+        crossAxisAlignment: WrapCrossAlignment.center,
+        children: [
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                noTelemetry
+                    ? Icons.cloud_off_rounded
+                    : (critical
+                        ? Icons.crisis_alert_rounded
+                        : (warningOnly
+                            ? Icons.warning_amber_rounded
+                            : Icons.check_circle_rounded)),
+                color: switch (tone) {
+                  UiBadgeTone.critical => UiColors.danger,
+                  UiBadgeTone.warning => UiColors.warning,
+                  UiBadgeTone.noTelemetry => UiColors.neutral,
+                  _ => UiColors.healthy,
+                },
+              ),
+              const SizedBox(width: 10),
+              ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 560),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(title, style: UiText.cardTitle),
+                    const SizedBox(height: 2),
+                    Text(detail, style: UiText.helper),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              if (noTelemetry) ...[
+                OutlinedButton(
+                  onPressed: onOpenDeviceManagement,
+                  style: uiSecondaryButton(),
+                  child: const Text('Open Device Management'),
+                ),
+                FilledButton(
+                  onPressed: onRetrySync,
+                  style: uiPrimaryButton(),
+                  child: const Text('Retry Sync'),
+                ),
+              ] else ...[
+                OutlinedButton(
+                  onPressed: onOpenQueue,
+                  style: uiSecondaryButton(),
+                  child: Text('Open $alertsLabel'),
+                ),
+                FilledButton(
+                  onPressed: onOpenIncident,
+                  style: uiPrimaryButton(),
+                  child: Text(
+                    incident == null ? 'Review Status' : 'Open Incident',
+                  ),
+                ),
+              ],
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class _IncidentCard extends StatelessWidget {
   const _IncidentCard({
     required this.incident,
     required this.onOpenIncident,
     required this.onNavigateToAlerts,
+    required this.alertsLabel,
   });
 
   final AlertEvent? incident;
   final VoidCallback onOpenIncident;
   final VoidCallback onNavigateToAlerts;
+  final String alertsLabel;
 
   @override
   Widget build(BuildContext context) {
     final hasIncident = incident != null;
+    final isCritical =
+        hasIncident && incident!.severity == SensorLevel.critical;
     final now = DateTime.now();
-    final stripColor =
-        hasIncident ? const Color(0xFFFFF2E4) : const Color(0xFFE9F7EE);
-    final stripIcon = hasIncident
-        ? Icons.warning_amber_rounded
-        : Icons.check_circle_outline_rounded;
-    final stripIconColor = hasIncident ? UiColors.warning : UiColors.healthy;
+    final stripColor = isCritical
+        ? SeverityColors.criticalSoft
+        : (hasIncident
+            ? SeverityColors.warningSoft
+            : SeverityColors.normalSoft);
+    final stripIcon = isCritical
+        ? Icons.crisis_alert_rounded
+        : (hasIncident
+            ? Icons.warning_amber_rounded
+            : Icons.check_circle_outline_rounded);
+    final stripIconColor = isCritical
+        ? UiColors.danger
+        : (hasIncident ? UiColors.warning : UiColors.healthy);
     return UiCard(
       big: true,
       child: Column(
@@ -349,7 +1058,9 @@ class _IncidentCard extends StatelessWidget {
                 Expanded(
                   child: Text(
                     hasIncident
-                        ? 'Active incident requires immediate response.'
+                        ? (isCritical
+                            ? 'Critical incident requires immediate response.'
+                            : 'Warning-level incident requires operator action.')
                         : 'No active incident. System is stable.',
                     style: UiText.cardTitle,
                   ),
@@ -369,13 +1080,11 @@ class _IncidentCard extends StatelessWidget {
               _IncidentMetaChip(
                 label: 'Priority',
                 value: hasIncident
-                    ? (incident!.severity == SensorLevel.critical
-                        ? 'Critical'
-                        : 'Warning')
+                    ? (isCritical ? 'Critical' : 'Warning')
                     : 'None',
               ),
               _IncidentMetaChip(
-                label: 'Incident queue',
+                label: alertsLabel,
                 value: hasIncident ? 'Active' : 'Clear',
               ),
             ],
@@ -385,9 +1094,14 @@ class _IncidentCard extends StatelessWidget {
           const SizedBox(height: 6),
           Text(
             hasIncident
-                ? '${_formatAlertTitle(incident!.title)} in ${incident!.zone} at ${_hhmm(incident!.timestamp)}'
+                ? '${_formatAlertTitle(incident!.title)} in ${incident!.zone} - ${formatIncidentRelativeTime(incident!.timestamp)}'
                 : 'No active incident to summarize.',
             style: UiText.body,
+          ),
+          const SizedBox(height: 10),
+          Text(
+            'Recommended Action: ${_recommendedAction(incident)}',
+            style: UiText.body.copyWith(fontWeight: FontWeight.w700),
           ),
           const SizedBox(height: 16),
           Wrap(
@@ -395,23 +1109,25 @@ class _IncidentCard extends StatelessWidget {
             runSpacing: 10,
             children: [
               SizedBox(
-                height: 44,
+                height: 46,
                 child: FilledButton(
                   onPressed: onOpenIncident,
                   style: uiPrimaryButton(),
-                  child: const Text('Open Incident'),
+                  child: Text(isCritical
+                      ? 'Engage Critical Response'
+                      : 'Open Incident'),
                 ),
               ),
               SizedBox(
-                height: 44,
+                height: 46,
                 child: OutlinedButton(
                   onPressed: onNavigateToAlerts,
                   style: uiSecondaryButton(),
-                  child: const Text('Acknowledge'),
+                  child: Text('Open $alertsLabel'),
                 ),
               ),
               SizedBox(
-                height: 44,
+                height: 46,
                 child: OutlinedButton(
                   onPressed: onNavigateToAlerts,
                   style: uiDangerButton(),
@@ -429,6 +1145,20 @@ class _IncidentCard extends StatelessWidget {
     final hh = dt.hour.toString().padLeft(2, '0');
     final mm = dt.minute.toString().padLeft(2, '0');
     return '$hh:$mm';
+  }
+
+  static String _recommendedAction(AlertEvent? incident) {
+    if (incident == null) {
+      return 'Continue monitoring. No emergency action is required.';
+    }
+    final title = incident.title.toLowerCase();
+    if (incident.severity == SensorLevel.critical && title.contains('water')) {
+      return 'Avoid ${incident.zone} and wait for further instructions.';
+    }
+    if (incident.severity == SensorLevel.critical) {
+      return 'Move away from the affected area immediately.';
+    }
+    return 'Review the alert details and avoid ${incident.zone} until it clears.';
   }
 }
 
@@ -460,8 +1190,8 @@ class _IncidentMetaChip extends StatelessWidget {
   }
 }
 
-class _AssetStatusCard extends StatelessWidget {
-  const _AssetStatusCard({
+class _RecentReadingsCard extends StatelessWidget {
+  const _RecentReadingsCard({
     required this.readings,
     required this.updatedAt,
   });
@@ -472,83 +1202,111 @@ class _AssetStatusCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final compact = uiIsCompactLayout(context);
-    final rows = <_AssetRow>[
-      _AssetRow(
-        asset: 'ESP32 Node #01',
-        statusLabel:
-            readings.isEmpty ? 'Offline / Communication Lost' : 'Healthy',
-        tone: readings.isEmpty ? UiBadgeTone.offline : UiBadgeTone.healthy,
-        lastUpdate: readings.isEmpty ? '--' : _hhmm(updatedAt),
-      ),
-      ...activeSensorTypes.map((type) {
-        final reading = _find(readings, type);
-        if (reading == null) {
-          return _AssetRow(
-            asset: type.label,
-            statusLabel: 'No telemetry',
-            tone: UiBadgeTone.noTelemetry,
-            lastUpdate: '--',
-          );
-        }
-        return _AssetRow(
-          asset: type.label,
-          statusLabel: _levelLabel(reading.level),
-          tone: _toneFromLevel(reading.level),
-          lastUpdate: _hhmm(updatedAt),
+    final rows = activeSensorTypes.map((type) {
+      final reading = _find(readings, type);
+      if (reading == null) {
+        return _ReadingRow(
+          sensor: type.label,
+          deviceId: _deviceIdForSensor(type),
+          value: '-- ${type.unit}',
+          delta: '--',
+          statusLabel: 'No telemetry',
+          tone: UiBadgeTone.noTelemetry,
+          lastUpdate: '--',
         );
-      }),
-    ];
+      }
+      return _ReadingRow(
+        sensor: type.label,
+        deviceId: _deviceIdForSensor(type),
+        value: _formatSensorValue(reading.value, type),
+        delta: reading.trendText,
+        statusLabel: _levelLabel(reading.level),
+        tone: _toneFromLevel(reading.level),
+        lastUpdate: _hhmm(updatedAt),
+      );
+    }).toList(growable: false);
 
     return UiCard(
       big: true,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text('Affected Assets', style: UiText.sectionTitle),
-          const SizedBox(height: 4),
-          const Text(
-            'Summary of asset impact and latest update time.',
-            style: UiText.helper,
+          SectionHeader(
+            title: 'Recent Readings',
+            subtitle: 'Latest sensor values with units and 1-hour movement.',
+            icon: Icons.receipt_long_rounded,
+            trailing: StatusBadge(
+              label: readings.isEmpty ? 'No telemetry' : '${rows.length} live',
+              tone: readings.isEmpty
+                  ? UiBadgeTone.noTelemetry
+                  : UiBadgeTone.healthy,
+              icon: readings.isEmpty
+                  ? Icons.cloud_off_rounded
+                  : Icons.cloud_done_rounded,
+            ),
           ),
           const SizedBox(height: 10),
-          ...rows.take(4).map(
-                (row) => Container(
-                  margin: const EdgeInsets.only(bottom: 8),
-                  padding: const EdgeInsets.all(10),
-                  decoration: BoxDecoration(
-                    color: UiColors.tableRow,
-                    borderRadius: BorderRadius.circular(UiRadius.input),
-                  ),
-                  child: compact
-                      ? Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
+          ...rows.map(
+            (row) => Container(
+              margin: const EdgeInsets.only(bottom: 8),
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(
+                color: UiColors.tableRow,
+                borderRadius: BorderRadius.circular(UiRadius.input),
+                border:
+                    Border.all(color: UiColors.border.withValues(alpha: 0.5)),
+              ),
+              child: compact
+                  ? Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(row.sensor, style: UiText.cardTitle),
+                        const SizedBox(height: 4),
+                        Text('${row.deviceId} | Updated ${row.lastUpdate}',
+                            style: UiText.helper),
+                        const SizedBox(height: 4),
+                        Text(row.value, style: UiText.body),
+                        const SizedBox(height: 8),
+                        Wrap(
+                          spacing: 8,
+                          runSpacing: 8,
                           children: [
-                            Text(row.asset, style: UiText.cardTitle),
-                            const SizedBox(height: 4),
-                            Text('Updated: ${row.lastUpdate}',
-                                style: UiText.helper),
-                            const SizedBox(height: 8),
-                            UiBadge(label: row.statusLabel, tone: row.tone),
-                          ],
-                        )
-                      : Row(
-                          children: [
-                            Expanded(
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Text(row.asset, style: UiText.cardTitle),
-                                  const SizedBox(height: 4),
-                                  Text('Updated: ${row.lastUpdate}',
-                                      style: UiText.helper),
-                                ],
-                              ),
+                            StatusBadge(
+                              label: row.statusLabel,
+                              tone: row.tone,
                             ),
-                            UiBadge(label: row.statusLabel, tone: row.tone),
+                            Text(row.delta, style: UiText.helper),
                           ],
                         ),
-                ),
-              ),
+                      ],
+                    )
+                  : Row(
+                      children: [
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(row.sensor, style: UiText.cardTitle),
+                              const SizedBox(height: 4),
+                              Text(
+                                  '${row.deviceId} | Updated ${row.lastUpdate}',
+                                  style: UiText.helper),
+                            ],
+                          ),
+                        ),
+                        SizedBox(
+                          width: 130,
+                          child: Text(row.value, style: UiText.body),
+                        ),
+                        SizedBox(
+                          width: 120,
+                          child: Text(row.delta, style: UiText.helper),
+                        ),
+                        StatusBadge(label: row.statusLabel, tone: row.tone),
+                      ],
+                    ),
+            ),
+          ),
         ],
       ),
     );
@@ -565,6 +1323,17 @@ class _AssetStatusCard extends StatelessWidget {
     final hh = dt.hour.toString().padLeft(2, '0');
     final mm = dt.minute.toString().padLeft(2, '0');
     return '$hh:$mm';
+  }
+
+  static String _formatSensorValue(double value, SensorType type) {
+    switch (type) {
+      case SensorType.waterLevel:
+        return '${value.toStringAsFixed(0)}%';
+      case SensorType.vibration:
+        return '${value.toStringAsFixed(1)} mm/s RMS';
+      case SensorType.temperature:
+        return '${value.toStringAsFixed(1)}deg C';
+    }
   }
 
   static UiBadgeTone _toneFromLevel(SensorLevel level) {
@@ -590,15 +1359,21 @@ class _AssetStatusCard extends StatelessWidget {
   }
 }
 
-class _AssetRow {
-  const _AssetRow({
-    required this.asset,
+class _ReadingRow {
+  const _ReadingRow({
+    required this.sensor,
+    required this.deviceId,
+    required this.value,
+    required this.delta,
     required this.statusLabel,
     required this.tone,
     required this.lastUpdate,
   });
 
-  final String asset;
+  final String sensor;
+  final String deviceId;
+  final String value;
+  final String delta;
   final String statusLabel;
   final UiBadgeTone tone;
   final String lastUpdate;
@@ -702,7 +1477,7 @@ class _TrendsCard extends StatelessWidget {
           ),
           const SizedBox(height: 12),
           SizedBox(
-            height: hasData ? 222 : 320,
+            height: hasData ? 222 : (compact ? 350 : 336),
             child: hasData
                 ? Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
@@ -742,42 +1517,49 @@ class _TrendsCard extends StatelessWidget {
                       ),
                     ],
                   )
-                : Column(
-                    children: [
-                      const Spacer(),
-                      UiEmptyState(
-                        icon: Icons.cloud_off_outlined,
-                        title:
-                            'No telemetry data received for the selected time range',
-                        subtitle:
-                            'No cloud data received for the selected time range',
-                        reasons: const [
-                          'device offline',
-                          'network interruption',
-                          'no samples received',
-                        ],
-                        primaryAction: FilledButton(
-                          onPressed: syncBusy ? null : onRetrySync,
-                          style: uiPrimaryButton(),
-                          child: syncBusy
-                              ? const SizedBox(
-                                  width: 16,
-                                  height: 16,
-                                  child: CircularProgressIndicator(
-                                    strokeWidth: 2,
-                                    color: Colors.white,
-                                  ),
-                                )
-                              : const Text('Retry Sync'),
+                : LayoutBuilder(
+                    builder: (context, constraints) {
+                      return SingleChildScrollView(
+                        padding: const EdgeInsets.symmetric(vertical: 6),
+                        child: ConstrainedBox(
+                          constraints:
+                              BoxConstraints(minHeight: constraints.maxHeight),
+                          child: Center(
+                            child: UiEmptyState(
+                              icon: Icons.cloud_off_outlined,
+                              title:
+                                  'No telemetry data received for the selected time range',
+                              subtitle:
+                                  'No cloud data received for the selected time range',
+                              reasons: const [
+                                'device offline',
+                                'network interruption',
+                                'no samples received',
+                              ],
+                              primaryAction: FilledButton(
+                                onPressed: syncBusy ? null : onRetrySync,
+                                style: uiPrimaryButton(),
+                                child: syncBusy
+                                    ? const SizedBox(
+                                        width: 16,
+                                        height: 16,
+                                        child: CircularProgressIndicator(
+                                          strokeWidth: 2,
+                                          color: Colors.white,
+                                        ),
+                                      )
+                                    : const Text('Retry Sync'),
+                              ),
+                              secondaryAction: OutlinedButton(
+                                onPressed: onViewDeviceStatus,
+                                style: uiSecondaryButton(),
+                                child: const Text('View device status'),
+                              ),
+                            ),
+                          ),
                         ),
-                        secondaryAction: OutlinedButton(
-                          onPressed: onViewDeviceStatus,
-                          style: uiSecondaryButton(),
-                          child: const Text('View device status'),
-                        ),
-                      ),
-                      const Spacer(),
-                    ],
+                      );
+                    },
                   ),
           ),
           const SizedBox(height: 8),
@@ -801,7 +1583,7 @@ class _TrendsCard extends StatelessWidget {
       case SensorType.vibration:
         return 'Warning threshold: 2.8 mm/s RMS | Critical threshold: 4.0 mm/s RMS';
       case SensorType.temperature:
-        return 'Warning threshold: 35°C | Critical threshold: 40°C';
+        return 'Warning threshold: 35deg C | Critical threshold: 40deg C';
     }
   }
 
@@ -834,7 +1616,7 @@ class _TrendsCard extends StatelessWidget {
       case SensorType.vibration:
         return '${value.toStringAsFixed(1)} mm/s RMS';
       case SensorType.temperature:
-        return '${value.toStringAsFixed(1)}°C';
+        return '${value.toStringAsFixed(1)}deg C';
     }
   }
 
@@ -849,141 +1631,62 @@ class _RecentAlertsCard extends StatelessWidget {
   const _RecentAlertsCard({
     required this.alerts,
     required this.onOpen,
-    required this.onViewQueue,
   });
 
   final List<AlertEvent> alerts;
   final ValueChanged<AlertEvent> onOpen;
-  final VoidCallback onViewQueue;
 
   @override
   Widget build(BuildContext context) {
     final compact = uiIsCompactLayout(context);
     final items = _aggregateRecentAlertLog(alerts);
+    final hasCritical =
+        items.any((alert) => alert.severity == SensorLevel.critical);
+    final hasWarning =
+        items.any((alert) => alert.severity == SensorLevel.warning);
     return UiCard(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text('Recent Alert Log', style: UiText.sectionTitle),
+          SectionHeader(
+            title: 'Active Incidents',
+            subtitle: 'Open warning and critical incidents awaiting review.',
+            icon: Icons.notification_important_rounded,
+            trailing: StatusBadge(
+              label: items.isEmpty ? 'Clear' : '${items.length} active',
+              tone: hasCritical
+                  ? UiBadgeTone.critical
+                  : (hasWarning ? UiBadgeTone.warning : UiBadgeTone.healthy),
+              icon: items.isEmpty
+                  ? Icons.check_circle_rounded
+                  : Icons.warning_amber_rounded,
+            ),
+          ),
           const SizedBox(height: 10),
           if (items.isEmpty)
-            SizedBox(
+            const SizedBox(
               height: 240,
-              child: Center(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    const Icon(
-                      Icons.notifications_off_outlined,
-                      size: 42,
-                      color: Color(0xFF7B8D95),
-                    ),
-                    const SizedBox(height: 14),
-                    Text(
-                      'No active alerts',
-                      style: UiText.cardTitle.copyWith(fontSize: 20),
-                    ),
-                    const SizedBox(height: 8),
-                    const Text(
-                      'New incidents will appear here when triggered',
-                      style: UiText.body,
-                      textAlign: TextAlign.center,
-                    ),
-                    const SizedBox(height: 18),
-                    OutlinedButton(
-                      onPressed: onViewQueue,
-                      style: uiSecondaryButton(),
-                      child: const Text('Open Incident Queue'),
-                    ),
-                  ],
-                ),
-              ),
+              child: IncidentZeroState(minHeight: 220),
             )
           else
             ...items.take(8).map(
-                  (alert) => Container(
-                    margin: const EdgeInsets.only(bottom: 8),
-                    padding: const EdgeInsets.all(10),
-                    decoration: BoxDecoration(
-                      color: UiColors.tableRow,
-                      borderRadius: BorderRadius.circular(UiRadius.input),
-                    ),
-                    child: compact
-                        ? Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                  '${alert.zone} | ${_formatAlertTitle(alert.title)}',
-                                  style: UiText.cardTitle),
-                              const SizedBox(height: 4),
-                              Text(_hhmm(alert.timestamp),
-                                  style: UiText.helper),
-                              const SizedBox(height: 8),
-                              Wrap(
-                                spacing: 8,
-                                runSpacing: 8,
-                                children: [
-                                  UiBadge(
-                                    label:
-                                        alert.severity == SensorLevel.critical
-                                            ? 'Critical'
-                                            : 'Warning',
-                                    tone: alert.severity == SensorLevel.critical
-                                        ? UiBadgeTone.critical
-                                        : UiBadgeTone.warning,
-                                  ),
-                                  TextButton(
-                                    onPressed: () => onOpen(alert),
-                                    style: uiLinkButton(),
-                                    child: const Text('Open'),
-                                  ),
-                                ],
-                              ),
-                            ],
-                          )
-                        : Row(
-                            children: [
-                              Expanded(
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Text(
-                                        '${alert.zone} | ${_formatAlertTitle(alert.title)}',
-                                        style: UiText.cardTitle),
-                                    const SizedBox(height: 4),
-                                    Text(_hhmm(alert.timestamp),
-                                        style: UiText.helper),
-                                  ],
-                                ),
-                              ),
-                              const SizedBox(width: 8),
-                              UiBadge(
-                                label: alert.severity == SensorLevel.critical
-                                    ? 'Critical'
-                                    : 'Warning',
-                                tone: alert.severity == SensorLevel.critical
-                                    ? UiBadgeTone.critical
-                                    : UiBadgeTone.warning,
-                              ),
-                              const SizedBox(width: 8),
-                              TextButton(
-                                onPressed: () => onOpen(alert),
-                                style: uiLinkButton(),
-                                child: const Text('Open'),
-                              ),
-                            ],
-                          ),
+                  (alert) => AlertCard(
+                    alertType: _formatAlertTitle(alert.title),
+                    deviceId: _sensorIdForAlert(alert),
+                    zone: alert.zone,
+                    measuredValue: _measuredValueForAlert(alert),
+                    threshold: _thresholdForAlert(alert.title, alert.severity),
+                    timestamp: formatIncidentRelativeTime(alert.timestamp),
+                    status: alert.status.label,
+                    severity: alert.severity,
+                    occurrences: alert.eventCount,
+                    onOpen: () => onOpen(alert),
+                    compact: compact,
                   ),
                 ),
         ],
       ),
     );
-  }
-
-  static String _hhmm(DateTime dt) {
-    final hh = dt.hour.toString().padLeft(2, '0');
-    final mm = dt.minute.toString().padLeft(2, '0');
-    return '$hh:$mm';
   }
 }
 
@@ -993,11 +1696,17 @@ class _DeviceOverviewCard extends StatelessWidget {
     required this.siteName,
     required this.readings,
     required this.updatedAt,
+    required this.onRetrySync,
+    required this.onOpenIncidentQueue,
+    required this.alertsLabel,
   });
 
   final String siteName;
   final List<SensorReading> readings;
   final DateTime updatedAt;
+  final VoidCallback onRetrySync;
+  final VoidCallback onOpenIncidentQueue;
+  final String alertsLabel;
 
   @override
   Widget build(BuildContext context) {
@@ -1012,88 +1721,125 @@ class _DeviceOverviewCard extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text('Field Device Overview', style: UiText.sectionTitle),
+          SectionHeader(
+            title: 'Device Status Overview',
+            subtitle: 'Desktop table, mobile cards, and clear connectivity.',
+            icon: Icons.router_rounded,
+            trailing: StatusBadge.online(
+              online: readings.isNotEmpty,
+              label: readings.isEmpty ? 'Offline' : 'Online',
+            ),
+          ),
           const SizedBox(height: 10),
-          ...rows.map(
-            (row) => Container(
-              margin: const EdgeInsets.only(bottom: 8),
-              padding: const EdgeInsets.all(10),
-              decoration: BoxDecoration(
-                color: UiColors.tableRow,
-                borderRadius: BorderRadius.circular(UiRadius.input),
+          if (compact)
+            ...rows.map(
+              (row) => DeviceStatusCard(
+                deviceName: row.device,
+                deviceId: row.deviceId,
+                zone: row.zone,
+                statusLabel: row.statusLabel,
+                statusTone: row.tone,
+                latestTelemetry: row.latestTelemetry,
+                readingSummary: row.readingSummary,
+                icon: row.icon,
+                primaryActionLabel: row.actionLabel,
+                onPrimaryAction: onRetrySync,
+                secondaryActionLabel: 'Open $alertsLabel',
+                onSecondaryAction: onOpenIncidentQueue,
               ),
-              child: compact
-                  ? Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(row.device, style: UiText.cardTitle),
-                        const SizedBox(height: 3),
-                        Text(row.zone, style: UiText.helper),
-                        const SizedBox(height: 3),
-                        Text('Latest telemetry: ${row.latestTelemetry}',
-                            style: UiText.helper),
-                        const SizedBox(height: 8),
-                        UiBadge(label: row.statusLabel, tone: row.tone),
-                        const SizedBox(height: 4),
-                        Wrap(
-                          spacing: 2,
-                          children: [
-                            TextButton(
-                              onPressed: () {},
-                              style: uiLinkButton(),
-                              child: Text(row.actionLabel),
-                            ),
-                            TextButton(
-                              onPressed: () {},
-                              style: uiLinkButton(),
-                              child: const Text('View Details'),
-                            ),
-                          ],
-                        ),
-                      ],
-                    )
-                  : Row(
+            )
+          else
+            UiResponsiveTable(
+              minWidth: 920,
+              child: Column(
+                children: [
+                  const UiTableHeaderRow(
+                    children: [
+                      Expanded(
+                          flex: 3,
+                          child: Text('Device', style: UiText.cardTitle)),
+                      Expanded(
+                          flex: 2,
+                          child: Text('Device ID', style: UiText.cardTitle)),
+                      Expanded(
+                          flex: 3,
+                          child: Text('Zone', style: UiText.cardTitle)),
+                      Expanded(
+                          flex: 2,
+                          child: Text('Latest', style: UiText.cardTitle)),
+                      Expanded(
+                          flex: 2,
+                          child: Text('Status', style: UiText.cardTitle)),
+                      Expanded(
+                          flex: 2,
+                          child: Text('Action', style: UiText.cardTitle)),
+                    ],
+                  ),
+                  const SizedBox(height: 10),
+                  ...rows.map(
+                    (row) => UiTableBodyRow(
+                      height: 62,
                       children: [
                         Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
+                          flex: 3,
+                          child: Row(
                             children: [
-                              Text(row.device, style: UiText.cardTitle),
-                              const SizedBox(height: 3),
-                              Text(row.zone, style: UiText.helper),
-                              const SizedBox(height: 3),
-                              Text('Latest telemetry: ${row.latestTelemetry}',
-                                  style: UiText.helper),
+                              Icon(row.icon,
+                                  size: 18, color: uiToneColor(row.tone)),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: Text(
+                                  row.device,
+                                  style: UiText.body.copyWith(
+                                    fontWeight: FontWeight.w700,
+                                  ),
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              ),
                             ],
                           ),
                         ),
-                        const SizedBox(width: 8),
-                        Column(
-                          crossAxisAlignment: CrossAxisAlignment.end,
-                          children: [
-                            UiBadge(label: row.statusLabel, tone: row.tone),
-                            const SizedBox(height: 4),
-                            Wrap(
-                              spacing: 2,
-                              children: [
-                                TextButton(
-                                  onPressed: () {},
-                                  style: uiLinkButton(),
-                                  child: Text(row.actionLabel),
-                                ),
-                                TextButton(
-                                  onPressed: () {},
-                                  style: uiLinkButton(),
-                                  child: const Text('View Details'),
-                                ),
-                              ],
+                        Expanded(
+                          flex: 2,
+                          child: Text(
+                            row.deviceId,
+                            style: UiText.body.copyWith(
+                              fontWeight: FontWeight.w700,
+                              color: UiColors.textStrong,
                             ),
-                          ],
+                          ),
+                        ),
+                        Expanded(
+                            flex: 3,
+                            child: Text(row.zone, style: UiText.helper)),
+                        Expanded(
+                            flex: 2,
+                            child: Text(row.latestTelemetry,
+                                style: UiText.helper)),
+                        Expanded(
+                          flex: 2,
+                          child: Align(
+                            alignment: Alignment.centerLeft,
+                            child: StatusBadge(
+                              label: row.statusLabel,
+                              tone: row.tone,
+                            ),
+                          ),
+                        ),
+                        Expanded(
+                          flex: 2,
+                          child: TextButton(
+                            onPressed: onRetrySync,
+                            style: uiLinkButton(),
+                            child: Text(row.actionLabel),
+                          ),
                         ),
                       ],
                     ),
+                  ),
+                ],
+              ),
             ),
-          ),
         ],
       ),
     );
@@ -1104,11 +1850,14 @@ class _DeviceOverviewCard extends StatelessWidget {
     final online = readings.isNotEmpty;
     return _DeviceRow(
       device: 'ESP32 Node #01',
+      deviceId: 'ESP32-01',
       zone: zone,
-      statusLabel: online ? 'Healthy' : 'Offline / Communication Lost',
+      statusLabel: online ? 'Normal' : 'Offline / Communication Lost',
       tone: online ? UiBadgeTone.healthy : UiBadgeTone.offline,
       latestTelemetry: online ? _hhmm(updatedAt) : '--',
-      actionLabel: 'Retry',
+      readingSummary: online ? 'Gateway reporting' : 'No cloud heartbeat',
+      actionLabel: 'Retry Sync',
+      icon: Icons.memory_rounded,
     );
   }
 
@@ -1129,16 +1878,20 @@ class _DeviceOverviewCard extends StatelessWidget {
     if (reading == null) {
       return _DeviceRow(
         device: type.label,
+        deviceId: _deviceIdForSensor(type),
         zone: zone,
         statusLabel: 'No telemetry',
         tone: UiBadgeTone.noTelemetry,
         latestTelemetry: '--',
-        actionLabel: 'Retry',
+        readingSummary: '-- ${type.unit}',
+        actionLabel: 'Retry Sync',
+        icon: type.icon,
       );
     }
 
     return _DeviceRow(
       device: type.label,
+      deviceId: _deviceIdForSensor(type),
       zone: zone,
       statusLabel: reading.level == SensorLevel.normal
           ? 'Stable'
@@ -1149,7 +1902,9 @@ class _DeviceOverviewCard extends StatelessWidget {
               ? UiBadgeTone.critical
               : UiBadgeTone.warning),
       latestTelemetry: _hhmm(updatedAt),
-      actionLabel: 'Retry',
+      readingSummary: _formatSensorValue(reading.value, type),
+      actionLabel: 'Retry Sync',
+      icon: type.icon,
     );
   }
 
@@ -1163,41 +1918,55 @@ class _DeviceOverviewCard extends StatelessWidget {
 class _DeviceRow {
   const _DeviceRow({
     required this.device,
+    required this.deviceId,
     required this.zone,
     required this.statusLabel,
     required this.tone,
     required this.latestTelemetry,
+    required this.readingSummary,
     required this.actionLabel,
+    required this.icon,
   });
 
   final String device;
+  final String deviceId;
   final String zone;
   final String statusLabel;
   final UiBadgeTone tone;
   final String latestTelemetry;
+  final String readingSummary;
   final String actionLabel;
+  final IconData icon;
 }
 
 List<_IncidentGroup> _aggregateIncidentGroups(List<AlertEvent> events) {
   final buckets = <String, List<AlertEvent>>{};
   for (final event in events) {
-    final bucketStart = DateTime(
-      event.timestamp.year,
-      event.timestamp.month,
-      event.timestamp.day,
-      event.timestamp.hour,
-      (event.timestamp.minute ~/ 10) * 10,
-    );
-    final key =
-        '${event.zone}|${event.severity.name}|${bucketStart.toIso8601String()}|${_sensorKeyFromTitle(event.title)}';
+    final incidentId = event.incidentId?.trim();
+    final key = (incidentId != null && incidentId.isNotEmpty)
+        ? 'INCIDENT#$incidentId'
+        : (() {
+            final bucketStart = DateTime(
+              event.timestamp.year,
+              event.timestamp.month,
+              event.timestamp.day,
+              event.timestamp.hour,
+              (event.timestamp.minute ~/ 10) * 10,
+            );
+            return '${event.zone}|${event.severity.name}|${bucketStart.toIso8601String()}|${_sensorKeyFromTitle(event.title)}';
+          })();
     buckets.putIfAbsent(key, () => <AlertEvent>[]).add(event);
   }
 
   final groups = buckets.values.map((group) {
     group.sort((a, b) => b.timestamp.compareTo(a.timestamp));
+    final occurrences = group.fold<int>(
+      0,
+      (sum, item) => sum + (item.eventCount < 1 ? 1 : item.eventCount),
+    );
     return _IncidentGroup(
       source: group.first,
-      occurrences: group.length,
+      occurrences: occurrences,
       latestTimestamp: group.first.timestamp,
     );
   }).toList(growable: false);
@@ -1214,6 +1983,57 @@ List<AlertEvent> _aggregateRecentAlertLog(List<AlertEvent> events) {
   return _aggregateIncidentGroups(events)
       .map((group) => group.source)
       .toList(growable: false);
+}
+
+String _deviceIdForSensor(SensorType type) {
+  switch (type) {
+    case SensorType.waterLevel:
+      return 'WL-01';
+    case SensorType.vibration:
+      return 'VB-01';
+    case SensorType.temperature:
+      return 'TP-01';
+  }
+}
+
+String _sensorIdForAlert(AlertEvent alert) {
+  final lower = alert.title.toLowerCase();
+  if (lower.contains('water')) return 'WL-01';
+  if (lower.contains('vibration')) return 'VB-01';
+  if (lower.contains('temp')) return 'TP-01';
+  return 'SN-01';
+}
+
+String _measuredValueForAlert(AlertEvent alert) {
+  final value = alert.triggerValue?.trim();
+  if (value == null || value.isEmpty) return 'Not reported';
+  return value;
+}
+
+String _thresholdForAlert(String title, SensorLevel severity) {
+  final lower = title.toLowerCase();
+  final critical = severity == SensorLevel.critical;
+  if (lower.contains('water')) {
+    return critical ? 'Critical 85%' : 'Warning 70%';
+  }
+  if (lower.contains('vibration')) {
+    return critical ? 'Critical 4.0 mm/s RMS' : 'Warning 2.8 mm/s RMS';
+  }
+  if (lower.contains('temp')) {
+    return critical ? 'Critical 40deg C' : 'Warning 35deg C';
+  }
+  return critical ? 'Critical threshold' : 'Warning threshold';
+}
+
+String _formatSensorValue(double value, SensorType type) {
+  switch (type) {
+    case SensorType.waterLevel:
+      return '${value.toStringAsFixed(0)}%';
+    case SensorType.vibration:
+      return '${value.toStringAsFixed(1)} mm/s RMS';
+    case SensorType.temperature:
+      return '${value.toStringAsFixed(1)}deg C';
+  }
 }
 
 String _sensorKeyFromTitle(String title) {

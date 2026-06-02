@@ -26,14 +26,15 @@ exports.handler = async (event) => {
       return badRequest("Invalid metric. Use waterLevel|vibration|temperature");
     }
 
-    const baseSeries = await loadSeries(metric, points, range);
+    const baseSeries = await loadSeries(metric, points);
     const payload = baseSeries.map((item) => ({ timestamp: item.capturedAt, value: Number(item.value.toFixed(3)) }));
 
     return ok({
       metric,
       range,
       points: payload,
-      series: payload.map((item) => item.value)
+      series: payload,
+      timestamps: payload.map((item) => item.timestamp)
     });
   } catch (error) {
     console.error("getTrends error", error);
@@ -41,7 +42,7 @@ exports.handler = async (event) => {
   }
 };
 
-async function loadSeries(metric, points, range) {
+async function loadSeries(metric, points) {
   const result = await docClient.send(
     new QueryCommand({
       TableName: tables.sensor,
@@ -62,28 +63,11 @@ async function loadSeries(metric, points, range) {
 
   items.sort((a, b) => (a.capturedAt < b.capturedAt ? -1 : 1));
 
-  const stepMinutes = minutesPerPoint(range);
-
-  if (items.length === 0) {
-    const now = Date.now();
-    return Array.from({ length: points }, (_, index) => ({
-      capturedAt: new Date(now - (points - index) * stepMinutes * 60 * 1000).toISOString(),
-      value: 0
-    }));
-  }
-
   if (items.length >= points) {
     return items.slice(items.length - points);
   }
 
-  const seed = items[0];
-  const missing = points - items.length;
-  const prefix = Array.from({ length: missing }, (_, index) => ({
-    capturedAt: new Date(new Date(seed.capturedAt).getTime() - (missing - index) * stepMinutes * 60 * 1000).toISOString(),
-    value: seed.value
-  }));
-
-  return [...prefix, ...items];
+  return items;
 }
 
 function normalizeMetric(metric) {
@@ -103,22 +87,4 @@ function normalizeRange(range) {
   if (value === "14d") return "14D";
   if (value === "30d") return "30D";
   return String(range).toUpperCase();
-}
-
-function minutesPerPoint(range) {
-  switch (range) {
-    case "6H":
-      return 23;
-    case "24H":
-      return 60;
-    case "7D":
-      return 210;
-    case "14D":
-      return 240;
-    case "30D":
-      return 360;
-    case "1H":
-    default:
-      return 8;
-  }
 }

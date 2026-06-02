@@ -1,3 +1,5 @@
+// ignore_for_file: deprecated_member_use, avoid_web_libraries_in_flutter
+
 import 'dart:html' as html;
 
 const String _alertBeepDataUri =
@@ -26,6 +28,7 @@ Future<void> primeAlertAudio() async {
 Future<void> playAlertTone({
   String severityLabel = 'CRITICAL',
   bool announce = true,
+  bool continuous = false,
 }) async {
   try {
     _audio ??= html.AudioElement(_alertBeepDataUri)
@@ -33,7 +36,7 @@ Future<void> playAlertTone({
       ..volume = 1.0;
     _audio!
       ..muted = false
-      ..loop = false
+      ..loop = continuous
       ..currentTime = 0;
     await _audio!.play();
   } catch (_) {

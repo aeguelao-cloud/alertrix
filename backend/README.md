@@ -2,7 +2,7 @@
 
 This backend supports:
 - Sensor ingest and anomaly detection
-- Alert/work-order APIs
+- Incident/work-order APIs
 - FCM token registration
 - FCM test push and anomaly push
 
@@ -14,9 +14,15 @@ This backend supports:
 - `GET /api/alerts`
 - `POST /api/alerts/{alertId}/status`
 - `POST /api/alerts/{alertId}/work-orders`
+- `GET /api/v1/incidents/active`
+- `GET /api/v1/incidents/{incidentId}/events`
+- `POST /api/v1/incidents/{incidentId}/acknowledge`
+- `POST /api/v1/incidents/{incidentId}/resolve`
 - `POST /api/push/register-token`
 - `POST /api/push/test-alert`
 - `POST /api/sensors/ingest`
+- `GET /api/admin/devices`
+- `POST /api/admin/devices`
 
 ## Page layout aligned API
 
@@ -29,6 +35,20 @@ This backend supports:
 - admin-only blocks for `adminManagement` and `workOrders`
 
 Role context comes from request headers `X-User-Role` and `X-User-Id`.
+
+### Active incidents pagination
+
+`GET /api/v1/incidents/active` supports lightweight pagination:
+
+- `limit` (optional): page size, default `120`, max `1000`
+- `cursor` (optional): opaque cursor from previous response
+- `severity` (optional): `WARNING` or `CRITICAL`
+
+Response includes:
+
+- `items`: incident list
+- `nextCursor`: pass to the next request to continue
+- `hasMore`: `true` when `nextCursor` is present
 
 ## Device ingest flow (MQTT-first)
 
@@ -73,6 +93,17 @@ npm install
 C:\Users\JUN\AppData\Roaming\Python\Python314\Scripts\sam.exe build
 C:\Users\JUN\AppData\Roaming\Python\Python314\Scripts\sam.exe deploy --guided
 ```
+
+## Legacy Alert Migration (one-time)
+
+When upgrading from legacy `AlertTable` to incident-based tables, you can migrate historical records:
+
+```powershell
+cd F:\403\demo\backend
+npm run migrate:alerts-to-incidents -- --dry-run --alert-table alertrix-alerts-my --incident-table alertrix-incidents-my --sensor-event-table alertrix-sensor-events-my
+```
+
+Remove `--dry-run` to execute writes.
 
 ## Test examples
 

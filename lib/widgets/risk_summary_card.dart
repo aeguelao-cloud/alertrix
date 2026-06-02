@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../models/monitoring_models.dart';
+import '../theme/severity_colors.dart';
 
 class RiskSummaryCard extends StatelessWidget {
   const RiskSummaryCard({super.key, required this.readings});
@@ -37,7 +38,7 @@ class RiskSummaryCard extends StatelessWidget {
               value: criticalCount / total,
               count: criticalCount,
               total: readings.length,
-              color: SensorLevel.critical.color,
+              color: SeverityColors.critical,
             ),
             const SizedBox(height: 8),
             _RiskBar(
@@ -45,7 +46,7 @@ class RiskSummaryCard extends StatelessWidget {
               value: warningCount / total,
               count: warningCount,
               total: readings.length,
-              color: SensorLevel.warning.color,
+              color: SeverityColors.warning,
             ),
             const SizedBox(height: 8),
             _RiskBar(
@@ -53,7 +54,7 @@ class RiskSummaryCard extends StatelessWidget {
               value: normalCount / total,
               count: normalCount,
               total: readings.length,
-              color: SensorLevel.normal.color,
+              color: SeverityColors.normal,
             ),
           ],
         ),
