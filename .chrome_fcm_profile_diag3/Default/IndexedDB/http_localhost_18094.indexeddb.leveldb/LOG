@@ -1,7 +1,0 @@
-2026/04/12-12:29:48.084 737c Reusing MANIFEST F:\403\demo\.chrome_fcm_profile_diag\Default\IndexedDB\http_localhost_18094.indexeddb.leveldb/MANIFEST-000001
-2026/04/12-12:29:48.085 737c Recovering log #4
-2026/04/12-12:29:48.087 737c Reusing old log F:\403\demo\.chrome_fcm_profile_diag\Default\IndexedDB\http_localhost_18094.indexeddb.leveldb/000004.log 
-2026/04/12-12:29:48.127 27d4 Level-0 table #8: started
-2026/04/12-12:29:48.134 27d4 Level-0 table #8: 1681 bytes OK
-2026/04/12-12:29:48.145 27d4 Delete type=0 #4
-2026/04/12-12:29:48.147 27d4 Manual compaction at level-0 from '\x00\x03\x00\x00\x00' @ 72057594037927935 : 1 .. '\x00\x04\x00\x00\x00' @ 0 : 0; will stop at (end)

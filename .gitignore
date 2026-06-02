@@ -29,11 +29,10 @@ Thumbs.db
 .vscode/
 .idea/
 
-# Local browser profile/cache (never commit)
-.chrome_fcm_profile/
-.chrome_fcm_profile_chrome/
-.chrome_fcm_profile_diag2/
-.chrome_fcm_profile_diag3/
+# Local tool/browser state (never commit)
+.codex/
+.codex_tmp/
+.chrome_fcm_profile*/
 
 # Local secrets
 backend/env.local.json

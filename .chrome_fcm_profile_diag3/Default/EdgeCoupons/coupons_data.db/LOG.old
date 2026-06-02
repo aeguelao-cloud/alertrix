@@ -1,6 +1,0 @@
-2026/04/12-12:36:02.216 dfc Reusing MANIFEST F:\403\demo\.chrome_fcm_profile\Default\EdgeCoupons/coupons_data.db/MANIFEST-000001
-2026/04/12-12:36:02.218 dfc Recovering log #4
-2026/04/12-12:36:02.219 dfc Reusing old log F:\403\demo\.chrome_fcm_profile\Default\EdgeCoupons/coupons_data.db/000004.log 
-2026/04/12-12:36:02.501 5604 Level-0 table #8: started
-2026/04/12-12:36:02.512 5604 Level-0 table #8: 682208 bytes OK
-2026/04/12-12:36:02.522 5604 Delete type=0 #4
