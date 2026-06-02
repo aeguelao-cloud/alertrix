@@ -38,6 +38,20 @@ backend/env.local.json
 arduino/DHT11WaterLevelPractice/mqtt_secrets.h
 alertrix-*-firebase-adminsdk-*.json
 
+# Local thesis/presentation deliverables
+*.ppt
+*.pptx
+*.doc
+*.docx
+*.pdf
+docs/FYP_Final_Report_Draft.md
+docs/srd_feedback_integration.md
+docs/performance_evaluation_table.md
+docs/performance_measurement_*.csv
+docs/performance_testing_section_rewrite.md
+docs/screenshot_*.md
+docs/figures/figure_14_system_architecture_detailed.png
+
 # Local temp/build folders
 backend/.sam_build_new/
 tmp/
