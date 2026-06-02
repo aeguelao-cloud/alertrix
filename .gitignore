@@ -30,8 +30,7 @@ Thumbs.db
 .idea/
 
 # Local tool/browser state (never commit)
-.codex/
-.codex_tmp/
+.code*/
 .chrome_fcm_profile*/
 
 # Local secrets
