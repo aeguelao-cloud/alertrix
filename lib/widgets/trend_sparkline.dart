@@ -55,16 +55,18 @@ class _TrendSparklineState extends State<TrendSparkline> {
             constraints.maxHeight.isFinite ? constraints.maxHeight : 220.0;
         final size = Size(width, math.max(150.0, height));
         final timestamps = _resolveTimestamps(widget.values.length);
+        final xTicks = widget.xTicks ?? _defaultTicks(timestamps);
         final geometry = _TrendGeometry.build(
           size: size,
           values: widget.values,
           timestamps: timestamps,
+          xDomainStart: xTicks.isNotEmpty ? xTicks.first : null,
+          xDomainEnd: xTicks.isNotEmpty ? xTicks.last : null,
           warningThreshold: widget.warningThreshold,
           criticalThreshold: widget.criticalThreshold,
           minY: widget.minY,
           maxY: widget.maxY,
         );
-        final xTicks = widget.xTicks ?? _defaultTicks(timestamps);
         final index = _hoverIndex;
         final activeIndex =
             index == null || index < 0 || index >= geometry.points.length
@@ -503,6 +505,8 @@ class _TrendGeometry {
     required this.points,
     required this.values,
     required this.timestamps,
+    required this.xDomainStart,
+    required this.xDomainEnd,
     required this.minVal,
     required this.maxVal,
     required this.spread,
@@ -512,6 +516,8 @@ class _TrendGeometry {
   final List<Offset> points;
   final List<double> values;
   final List<DateTime> timestamps;
+  final DateTime xDomainStart;
+  final DateTime xDomainEnd;
   final double minVal;
   final double maxVal;
   final double spread;
@@ -520,6 +526,8 @@ class _TrendGeometry {
     required Size size,
     required List<double> values,
     required List<DateTime> timestamps,
+    required DateTime? xDomainStart,
+    required DateTime? xDomainEnd,
     required double? warningThreshold,
     required double? criticalThreshold,
     required double? minY,
@@ -563,10 +571,18 @@ class _TrendGeometry {
     maxVal += pad;
     spread = maxVal - minVal;
 
+    final resolvedStart = xDomainStart ?? timestamps.first;
+    final resolvedEnd = xDomainEnd ?? timestamps.last;
+    final firstMs = resolvedStart.millisecondsSinceEpoch.toDouble();
+    final lastMs = resolvedEnd.millisecondsSinceEpoch.toDouble();
+
     final points = <Offset>[];
     for (var i = 0; i < values.length; i++) {
-      final t = values.length == 1 ? 0.0 : i / (values.length - 1);
-      final x = plotRect.left + plotRect.width * t;
+      final timestampMs = timestamps[i].millisecondsSinceEpoch.toDouble();
+      final xRatio = (lastMs - firstMs).abs() < 1
+          ? 1.0
+          : ((timestampMs - firstMs) / (lastMs - firstMs)).clamp(0.0, 1.0);
+      final x = plotRect.left + plotRect.width * xRatio;
       final y =
           plotRect.bottom - ((values[i] - minVal) / spread) * plotRect.height;
       points.add(Offset(x, y));
@@ -577,6 +593,8 @@ class _TrendGeometry {
       points: points,
       values: values,
       timestamps: timestamps,
+      xDomainStart: resolvedStart,
+      xDomainEnd: resolvedEnd,
       minVal: minVal,
       maxVal: maxVal,
       spread: spread,
@@ -584,9 +602,8 @@ class _TrendGeometry {
   }
 
   double xForTime(DateTime time) {
-    if (timestamps.isEmpty) return plotRect.left;
-    final firstMs = timestamps.first.millisecondsSinceEpoch.toDouble();
-    final lastMs = timestamps.last.millisecondsSinceEpoch.toDouble();
+    final firstMs = xDomainStart.millisecondsSinceEpoch.toDouble();
+    final lastMs = xDomainEnd.millisecondsSinceEpoch.toDouble();
     if ((lastMs - firstMs).abs() < 1) return plotRect.left + plotRect.width;
     final xRatio =
         ((time.millisecondsSinceEpoch - firstMs) / (lastMs - firstMs))

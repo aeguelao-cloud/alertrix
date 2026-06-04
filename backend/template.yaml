@@ -180,6 +180,8 @@ Resources:
       Policies:
         - DynamoDBReadPolicy:
             TableName: !Ref SensorTable
+        - DynamoDBReadPolicy:
+            TableName: !Ref SettingsTable
 
   GetDashboardOverviewFunction:
     Type: AWS::Serverless::Function
@@ -509,6 +511,13 @@ Resources:
       Policies:
         - DynamoDBCrudPolicy:
             TableName: !Ref SettingsTable
+        - DynamoDBCrudPolicy:
+            TableName: !Ref UserProfileTable
+        - Statement:
+            - Effect: Allow
+              Action:
+                - ses:SendEmail
+              Resource: "*"
 
   GetDeviceLocationFunction:
     Type: AWS::Serverless::Function

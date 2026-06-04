@@ -294,6 +294,21 @@ class AwsMonitoringApi implements MonitoringApi {
     required String requestedBy,
     int durationSeconds = 120,
   }) async {
+    await setBuzzerSilence(
+      zone: zone,
+      role: role,
+      requestedBy: requestedBy,
+      durationSeconds: durationSeconds,
+    );
+  }
+
+  @override
+  Future<BuzzerSilenceState> setBuzzerSilence({
+    required String zone,
+    required UserRole role,
+    required String requestedBy,
+    required int durationSeconds,
+  }) async {
     final resp = await _client.post(
       Uri.parse('$baseUrl/api/device/buzzer/silence'),
       headers: {'Content-Type': 'application/json'},
@@ -307,6 +322,24 @@ class AwsMonitoringApi implements MonitoringApi {
     if (resp.statusCode < 200 || resp.statusCode >= 300) {
       throw Exception('Failed to silence buzzer: ${resp.statusCode}');
     }
+    return _buzzerStateFromApi(jsonDecode(resp.body) as Map<String, dynamic>);
+  }
+
+  @override
+  Future<BuzzerSilenceState> fetchBuzzerSilenceState({
+    required String zone,
+  }) async {
+    final uri = Uri.parse('$baseUrl/api/device/buzzer/state').replace(
+      queryParameters: {
+        'zone': zone,
+        '_': DateTime.now().millisecondsSinceEpoch.toString(),
+      },
+    );
+    final resp = await _client.get(uri);
+    if (resp.statusCode < 200 || resp.statusCode >= 300) {
+      throw Exception('Failed to fetch buzzer state: ${resp.statusCode}');
+    }
+    return _buzzerStateFromApi(jsonDecode(resp.body) as Map<String, dynamic>);
   }
 
   SensorType? _sensorTypeFromApi(String? value) {
@@ -400,6 +433,16 @@ class AwsMonitoringApi implements MonitoringApi {
       thresholdCritical: _asNullableDouble(json['thresholdCritical']),
       unit: json['unit']?.toString(),
       ingestTransport: json['ingestTransport']?.toString(),
+    );
+  }
+
+  BuzzerSilenceState _buzzerStateFromApi(Map<String, dynamic> json) {
+    return BuzzerSilenceState(
+      zone: json['zone']?.toString() ?? 'Zone A - Pump Station',
+      silenced: json['silenced'] == true,
+      silencedUntil: _parseApiTime(json['silencedUntil']?.toString()),
+      remainingSeconds: _asInt(json['remainingSeconds'], fallback: 0),
+      updatedAt: _parseApiTime(json['updatedAt']?.toString()),
     );
   }
 

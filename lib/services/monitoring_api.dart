@@ -31,6 +31,17 @@ abstract class MonitoringApi {
     required String requestedBy,
     int durationSeconds = 120,
   });
+
+  Future<BuzzerSilenceState> setBuzzerSilence({
+    required String zone,
+    required UserRole role,
+    required String requestedBy,
+    required int durationSeconds,
+  });
+
+  Future<BuzzerSilenceState> fetchBuzzerSilenceState({
+    required String zone,
+  });
 }
 
 enum AlertStatus {

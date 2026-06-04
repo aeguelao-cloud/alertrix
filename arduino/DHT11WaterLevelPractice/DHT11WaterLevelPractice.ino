@@ -44,7 +44,7 @@ const char* WIFI_SSID = WIFI_SSID_SECRET;
 const char* WIFI_PASSWORD = WIFI_PASSWORD_SECRET;
 const char* API_BASE_URL = "https://b4sm23mlze.execute-api.ap-southeast-5.amazonaws.com/prod";
 const char* SITE_ZONE = "Zone A - Pump Station";
-const char* FW_BUILD_ID = "FW_2026_05_30_MQTT_REAL_SENSORS_10S_BUZZER_VIB14";
+const char* FW_BUILD_ID = "FW_2026_06_04_CONTINUOUS_BUZZER_REAL_VIB";
 
 // MQTT first, with optional HTTP fallback if MQTT publish fails.
 const bool USE_MQTT_UPLINK = true;
@@ -115,8 +115,6 @@ const unsigned long WATER_POST_INTERVAL_MS = 1000;
 const unsigned long TEMP_POST_INTERVAL_MS = 2000;
 const unsigned long VIBRATION_POST_INTERVAL_MS = 2000;
 const unsigned long BUZZER_STATE_FETCH_INTERVAL_MS = 1000;
-const unsigned long BUZZER_ALERT_INTERVAL_MS = 30000;
-const unsigned long BUZZER_BEEP_DURATION_MS = 10000;
 const unsigned long BUZZER_WARNING_PATTERN_MS = 2000;
 const unsigned long BUZZER_WARNING_ON_MS = 300;
 const unsigned long BUZZER_CRITICAL_PATTERN_MS = 1000;
@@ -623,34 +621,15 @@ bool updateBuzzer(AlertSeverity severity, unsigned long now) {
     return false;
   }
 
-  if (severity != lastBuzzerSeverity) {
-    buzzerBeepActive = false;
-    lastBuzzerBeepStartMs = 0;
+  if (!buzzerBeepActive || severity != lastBuzzerSeverity) {
+    buzzerBeepActive = true;
+    lastBuzzerBeepStartMs = now;
     lastBuzzerSeverity = severity;
   }
 
-  if (buzzerBeepActive) {
-    if (now - lastBuzzerBeepStartMs >= BUZZER_BEEP_DURATION_MS) {
-      buzzerBeepActive = false;
-      digitalWrite(BUZZER_PIN, LOW);
-      return false;
-    }
-    const bool pulseOn = buzzerPulseOn(severity, now - lastBuzzerBeepStartMs);
-    digitalWrite(BUZZER_PIN, pulseOn ? HIGH : LOW);
-    return pulseOn;
-  }
-
-  if (lastBuzzerBeepStartMs == 0 ||
-      now - lastBuzzerBeepStartMs >= BUZZER_ALERT_INTERVAL_MS) {
-    buzzerBeepActive = true;
-    lastBuzzerBeepStartMs = now;
-    const bool pulseOn = buzzerPulseOn(severity, 0);
-    digitalWrite(BUZZER_PIN, pulseOn ? HIGH : LOW);
-    return pulseOn;
-  }
-
-  digitalWrite(BUZZER_PIN, LOW);
-  return false;
+  const bool pulseOn = buzzerPulseOn(severity, now - lastBuzzerBeepStartMs);
+  digitalWrite(BUZZER_PIN, pulseOn ? HIGH : LOW);
+  return pulseOn;
 }
 
 void setup() {
@@ -672,6 +651,8 @@ void setup() {
   Serial.println("DHT11 + Water Level + Buzzer practice started.");
   Serial.print("Build=");
   Serial.println(FW_BUILD_ID);
+  Serial.println("Buzzer mode: continuous while ALARM=ON; stops when alert clears or cloud silence is requested.");
+  Serial.println("Buzzer tones: WARNING slow pulse, CRITICAL rapid triple pulse.");
   Serial.print("FW WIFI_SSID=");
   Serial.println(WIFI_SSID);
   Serial.println("Format: T=xx.x,H=yy.y,ADC=zzzz,WL=pp.pp,VIB=n.nn,VIB_RMS_ADC=n.nn,VIB_ADC_PP=n,VIB_BASE_ADC=n.nn,VIB_SOURCE=text,SEVERITY=text,ALARM=ON/OFF,BUZZER=ON/OFF,ADC_FAULT=n,STATUS=text");

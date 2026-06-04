@@ -146,6 +146,22 @@ class IncidentSensorEvent {
   final String? ingestTransport;
 }
 
+class BuzzerSilenceState {
+  const BuzzerSilenceState({
+    required this.zone,
+    required this.silenced,
+    this.silencedUntil,
+    this.remainingSeconds = 0,
+    this.updatedAt,
+  });
+
+  final String zone;
+  final bool silenced;
+  final DateTime? silencedUntil;
+  final int remainingSeconds;
+  final DateTime? updatedAt;
+}
+
 class DashboardBanner {
   const DashboardBanner({
     required this.type,

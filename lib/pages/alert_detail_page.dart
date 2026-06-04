@@ -83,6 +83,7 @@ class AlertDetailPage extends StatefulWidget {
     this.onIgnore,
     this.onCreateWorkOrder,
     this.onSilenceBuzzer,
+    this.deviceBuzzerSilenced = false,
     this.onLoadIncidentEvents,
   });
 
@@ -93,6 +94,7 @@ class AlertDetailPage extends StatefulWidget {
   final Future<void> Function()? onIgnore;
   final Future<String> Function()? onCreateWorkOrder;
   final Future<void> Function()? onSilenceBuzzer;
+  final bool deviceBuzzerSilenced;
   final Future<List<IncidentSensorEvent>> Function()? onLoadIncidentEvents;
 
   @override
@@ -281,8 +283,12 @@ class _AlertDetailPageState extends State<AlertDetailPage> {
                   width: double.infinity,
                   child: OutlinedButton.icon(
                     onPressed: _busy ? null : _silenceBuzzer,
-                    icon: const Icon(Icons.volume_off_rounded),
-                    label: const Text('Silence Buzzer'),
+                    icon: Icon(widget.deviceBuzzerSilenced
+                        ? Icons.volume_up_rounded
+                        : Icons.volume_off_rounded),
+                    label: Text(widget.deviceBuzzerSilenced
+                        ? 'Enable Buzzer'
+                        : 'Silence Buzzer'),
                   ),
                 ),
                 if (_silenceDebugMessage != null) ...[
@@ -524,7 +530,7 @@ class _AlertDetailPageState extends State<AlertDetailPage> {
         context: context,
         builder: (context) => AlertDialog(
           title: const Text('Unavailable'),
-          content: const Text('Silence action is not connected on this page.'),
+          content: const Text('Buzzer action is not connected on this page.'),
           actions: [
             TextButton(
               onPressed: () => Navigator.of(context).pop(),
@@ -544,7 +550,9 @@ class _AlertDetailPageState extends State<AlertDetailPage> {
         context: context,
         builder: (context) => AlertDialog(
           title: const Text('Success'),
-          content: const Text('Buzzer has been silenced.'),
+          content: Text(widget.deviceBuzzerSilenced
+              ? 'Buzzer has been enabled.'
+              : 'Buzzer has been silenced.'),
           actions: [
             TextButton(
               onPressed: () => Navigator.of(context).pop(),
@@ -560,7 +568,7 @@ class _AlertDetailPageState extends State<AlertDetailPage> {
         context: context,
         builder: (context) => AlertDialog(
           title: const Text('Failed'),
-          content: const Text('Failed to silence buzzer. Please try again.'),
+          content: const Text('Failed to update buzzer. Please try again.'),
           actions: [
             TextButton(
               onPressed: () => Navigator.of(context).pop(),

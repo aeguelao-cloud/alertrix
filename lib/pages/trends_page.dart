@@ -425,12 +425,17 @@ class _TrendsPageState extends State<TrendsPage> {
 
   List<double> _seriesFor(SensorType type) {
     final remote = _remoteSeries[type];
-    if (remote != null && remote.isNotEmpty) return remote;
+    if (remote != null) return remote;
+    if (_requiresRemoteHistory(_selectedRange)) return const <double>[];
     return buildTrendSeries(
       source: widget.snapshot.history[type] ?? const <double>[],
       range: _selectedRange,
       metric: type,
     );
+  }
+
+  bool _requiresRemoteHistory(String range) {
+    return range == '7D' || range == '14D' || range == '30D';
   }
 
   List<DateTime> _timestampsFor(SensorType type, int count) {

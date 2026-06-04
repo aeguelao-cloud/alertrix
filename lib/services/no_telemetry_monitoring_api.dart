@@ -84,4 +84,21 @@ class NoTelemetryMonitoringApi implements MonitoringApi {
   }) async {
     throw UnsupportedError('Cloud API is not configured.');
   }
+
+  @override
+  Future<BuzzerSilenceState> setBuzzerSilence({
+    required String zone,
+    required UserRole role,
+    required String requestedBy,
+    required int durationSeconds,
+  }) async {
+    throw UnsupportedError('Cloud API is not configured.');
+  }
+
+  @override
+  Future<BuzzerSilenceState> fetchBuzzerSilenceState({
+    required String zone,
+  }) async {
+    throw UnsupportedError('Cloud API is not configured.');
+  }
 }

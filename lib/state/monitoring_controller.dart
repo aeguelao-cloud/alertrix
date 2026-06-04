@@ -215,6 +215,26 @@ class MonitoringController extends ChangeNotifier {
     );
   }
 
+  Future<BuzzerSilenceState> setBuzzerSilence({
+    required String zone,
+    required UserRole role,
+    required String requestedBy,
+    required int durationSeconds,
+  }) {
+    return _api.setBuzzerSilence(
+      zone: zone,
+      role: role,
+      requestedBy: requestedBy,
+      durationSeconds: durationSeconds,
+    );
+  }
+
+  Future<BuzzerSilenceState> fetchBuzzerSilenceState({
+    required String zone,
+  }) {
+    return _api.fetchBuzzerSilenceState(zone: zone);
+  }
+
   @override
   void dispose() {
     _disposed = true;

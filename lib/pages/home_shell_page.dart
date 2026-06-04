@@ -43,7 +43,8 @@ class HomeShellPage extends StatefulWidget {
   State<HomeShellPage> createState() => _HomeShellPageState();
 }
 
-class _HomeShellPageState extends State<HomeShellPage> {
+class _HomeShellPageState extends State<HomeShellPage>
+    with WidgetsBindingObserver {
   // Enable in-app alert popups so critical/warning messages are visible even
   // when browser/system push notifications are not shown.
   static const bool _enableInAppAlertPopups = true;
@@ -66,17 +67,25 @@ class _HomeShellPageState extends State<HomeShellPage> {
   bool _webAutoPermissionInFlight = false;
   bool _soundConsentPromptShown = false;
   bool _soundConsentPromptOpen = false;
-  Timer? _alertSoundLoopTimer;
   Timer? _pushRetryTimer;
   int _pushRetryCount = 0;
   bool _manualRefreshBusy = false;
   bool _manualPushBusy = false;
+  bool _deviceBuzzerControlBusy = false;
+  bool _deviceBuzzerStateFetchInFlight = false;
+  bool _deviceBuzzerSilenced = false;
+  String? _deviceBuzzerStateZone;
   int _refreshToken = 0;
   DateTime? _lastPopupShownAt;
+  DateTime? _lastHiddenAlertNotificationAt;
+  DateTime? _lastDeviceBuzzerStateFetchAt;
+  SensorLevel? _activePageAlertLevel;
+  bool _pageAlertSoundStopped = false;
   static const Duration _alertFeedbackWindow = Duration(seconds: 30);
-  static const Duration _alertSoundDuration = Duration(seconds: 10);
   static const Duration _popupCooldown = _alertFeedbackWindow;
   static const Duration _recentAlertPopupWindow = Duration(minutes: 5);
+  static const Duration _hiddenAlertNotificationCooldown = Duration(minutes: 1);
+  static const Duration _deviceBuzzerStateRefreshGap = Duration(seconds: 5);
   static const String _defaultZone = 'Zone A - Pump Station';
   static const Color _sideNavBg = Color(0xFF102A34);
   static const Color _sideNavDivider = Color(0xFF1E3F4D);
@@ -143,6 +152,7 @@ class _HomeShellPageState extends State<HomeShellPage> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _pushService = PushNotificationService();
     _controller = MonitoringController(apiBaseUrl: widget.apiBaseUrl);
     if (_enableInAppAlertPopups) {
@@ -155,6 +165,7 @@ class _HomeShellPageState extends State<HomeShellPage> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     unawaited(_stopAlertSoundLoop());
     _pushRetryTimer?.cancel();
     _fcmSubscription?.cancel();
@@ -163,6 +174,13 @@ class _HomeShellPageState extends State<HomeShellPage> {
     }
     _controller.dispose();
     super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      unawaited(_resumePageAlertSoundIfNeeded());
+    }
   }
 
   @override
@@ -212,6 +230,7 @@ class _HomeShellPageState extends State<HomeShellPage> {
         ),
         title: _buildCompactTopBarTitle(),
         actions: [
+          _buildDeviceBuzzerActionButton(compact: true),
           _buildRefreshActionButton(),
           _buildPushActionButton(),
           _buildUserMenuButton(),
@@ -489,6 +508,7 @@ class _HomeShellPageState extends State<HomeShellPage> {
     if (!_enableInAppAlertPopups) return;
     final snapshot = _controller.snapshot;
     if (snapshot == null || !mounted) return;
+    _updateActivePageAlertState(snapshot);
     _primeExistingAlerts(snapshot);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
@@ -532,6 +552,8 @@ class _HomeShellPageState extends State<HomeShellPage> {
           ),
         ),
         const SizedBox(width: 8),
+        _buildDeviceBuzzerActionButton(),
+        const SizedBox(width: 6),
         _buildRefreshActionButton(),
         _buildPushActionButton(),
         _buildUserMenuButton(),
@@ -622,6 +644,57 @@ class _HomeShellPageState extends State<HomeShellPage> {
               child: CircularProgressIndicator(strokeWidth: 2),
             )
           : const Icon(Icons.refresh_rounded),
+    );
+  }
+
+  Widget _buildDeviceBuzzerActionButton({bool compact = false}) {
+    final hasActiveAlert =
+        _highestActiveAlertLevel(_controller.snapshot?.alerts ?? const []) !=
+            SensorLevel.normal;
+    if (!hasActiveAlert) return const SizedBox.shrink();
+
+    final onPressed = (_deviceBuzzerControlBusy || !_controller.usingRemoteApi)
+        ? null
+        : _toggleDeviceBuzzerFromButton;
+    final enabled = _deviceBuzzerSilenced;
+    final label = enabled ? 'Enable Buzzer' : 'Silence Buzzer';
+    final tooltip = enabled ? 'Enable Device Buzzer' : 'Silence Device Buzzer';
+    final icon = _deviceBuzzerControlBusy
+        ? const SizedBox(
+            width: 18,
+            height: 18,
+            child: CircularProgressIndicator(strokeWidth: 2),
+          )
+        : Icon(enabled ? Icons.volume_up_rounded : Icons.volume_off_rounded);
+    final foreground = enabled ? UiColors.brand : UiColors.danger;
+    final border = enabled ? const Color(0xFFB9D7DD) : const Color(0xFFF2B2B2);
+
+    if (compact) {
+      return IconButton(
+        tooltip: tooltip,
+        onPressed: onPressed,
+        icon: icon,
+      );
+    }
+
+    return Tooltip(
+      message: tooltip,
+      child: OutlinedButton.icon(
+        onPressed: onPressed,
+        icon: icon,
+        label: Text(label),
+        style: OutlinedButton.styleFrom(
+          foregroundColor: foreground,
+          backgroundColor: UiColors.surface,
+          side: BorderSide(color: border),
+          minimumSize: const Size(0, 40),
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(UiRadius.button),
+          ),
+          textStyle: const TextStyle(fontSize: 13, fontWeight: FontWeight.w800),
+        ),
+      ),
     );
   }
 
@@ -879,9 +952,10 @@ class _HomeShellPageState extends State<HomeShellPage> {
           onIgnore: () => _controller.ignoreAlert(alert.id, widget.user.role),
           onCreateWorkOrder: () =>
               _controller.createWorkOrder(alert.id, widget.user.role),
-          onSilenceBuzzer: () => _silenceCurrentAlertSound(
+          onSilenceBuzzer: () => _toggleDeviceBuzzerFromButton(
             zoneOverride: alert.zone,
           ),
+          deviceBuzzerSilenced: _deviceBuzzerSilenced,
           onLoadIncidentEvents: () => _controller.fetchIncidentEvents(alert.id),
         ),
       ),
@@ -1105,7 +1179,18 @@ class _HomeShellPageState extends State<HomeShellPage> {
     final color = severity == 'CRITICAL'
         ? const Color(0xFFC93C3C)
         : const Color(0xFFE09D25);
-    unawaited(_startAlertFeedbackLoop(_sensorLevelFromSeverityText(severity)));
+    unawaited(_showHiddenAlertNotification(
+      title: _pushPopupTitle(title: title, body: body, severity: severity),
+      body: body,
+      severity: _sensorLevelFromSeverityText(severity),
+      tag: id,
+    ));
+    final level = _sensorLevelFromSeverityText(severity);
+    unawaited(_startAlertFeedbackLoop(
+      level,
+      announcementText:
+          '${level.label} alert. ${_pushPopupTitle(title: title, body: body, severity: severity)}. $body',
+    ));
 
     try {
       await showDialog<void>(
@@ -1146,10 +1231,17 @@ class _HomeShellPageState extends State<HomeShellPage> {
             ),
             TextButton(
               onPressed: () async {
-                Navigator.of(dialogContext).pop();
-                await _silenceCurrentAlertSound(zoneOverride: zone);
+                await _stopPageAlertSound();
               },
-              child: const Text('Silence'),
+              child: const Text('Stop Page Sound'),
+            ),
+            TextButton(
+              onPressed: () async {
+                await _toggleDeviceBuzzerFromButton(zoneOverride: zone);
+              },
+              child: Text(_deviceBuzzerSilenced
+                  ? 'Enable Device Buzzer'
+                  : 'Silence Device Buzzer'),
             ),
             FilledButton(
               onPressed: () {
@@ -1162,7 +1254,6 @@ class _HomeShellPageState extends State<HomeShellPage> {
         ),
       );
     } finally {
-      await _stopAlertSoundLoop();
       _alertDialogOpen = false;
     }
   }
@@ -1203,7 +1294,7 @@ class _HomeShellPageState extends State<HomeShellPage> {
     for (final alert in snapshot.alerts) {
       if (alert.severity != SensorLevel.critical) continue;
       if (!_isAlertWithinPopupWindow(alert.timestamp)) continue;
-      if (_shownAlertPopups.contains(alert.id)) continue;
+      if (_shownAlertPopups.contains(_alertPopupKey(alert))) continue;
       target = alert;
       break;
     }
@@ -1211,7 +1302,7 @@ class _HomeShellPageState extends State<HomeShellPage> {
       for (final alert in snapshot.alerts) {
         if (alert.severity != SensorLevel.warning) continue;
         if (!_isAlertWithinPopupWindow(alert.timestamp)) continue;
-        if (_shownAlertPopups.contains(alert.id)) continue;
+        if (_shownAlertPopups.contains(_alertPopupKey(alert))) continue;
         target = alert;
         break;
       }
@@ -1219,12 +1310,22 @@ class _HomeShellPageState extends State<HomeShellPage> {
 
     final popupTarget = target;
     if (popupTarget == null) return;
-    if (_shownAlertPopups.contains(popupTarget.id)) return;
+    final popupKey = _alertPopupKey(popupTarget);
+    if (_shownAlertPopups.contains(popupKey)) return;
 
-    _shownAlertPopups.add(popupTarget.id);
+    unawaited(_showHiddenAlertNotification(
+      title: _alertDialogTitle(popupTarget),
+      body: '${popupTarget.zone}: ${popupTarget.title}',
+      severity: popupTarget.severity,
+      tag: popupKey,
+    ));
+    _shownAlertPopups.add(popupKey);
     _alertDialogOpen = true;
     _lastPopupShownAt = DateTime.now();
-    unawaited(_startAlertFeedbackLoop(popupTarget.severity));
+    unawaited(_startAlertFeedbackLoop(
+      popupTarget.severity,
+      announcementText: _alertAnnouncementText(popupTarget),
+    ));
 
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       if (!mounted) return;
@@ -1275,12 +1376,19 @@ class _HomeShellPageState extends State<HomeShellPage> {
                 ),
                 TextButton(
                   onPressed: () async {
-                    Navigator.of(dialogContext).pop();
-                    await _silenceCurrentAlertSound(
+                    await _stopPageAlertSound();
+                  },
+                  child: const Text('Stop Page Sound'),
+                ),
+                TextButton(
+                  onPressed: () async {
+                    await _toggleDeviceBuzzerFromButton(
                       zoneOverride: popupTarget.zone,
                     );
                   },
-                  child: const Text('Silence'),
+                  child: Text(_deviceBuzzerSilenced
+                      ? 'Enable Device Buzzer'
+                      : 'Silence Device Buzzer'),
                 ),
                 FilledButton(
                   onPressed: () {
@@ -1294,7 +1402,6 @@ class _HomeShellPageState extends State<HomeShellPage> {
           },
         );
       } finally {
-        await _stopAlertSoundLoop();
         _alertDialogOpen = false;
       }
     });
@@ -1363,24 +1470,117 @@ class _HomeShellPageState extends State<HomeShellPage> {
     return 'Stay alert and avoid entering ${alert.zone} until the alert clears.';
   }
 
-  Future<void> _startAlertFeedbackLoop(SensorLevel level) async {
+  String _alertAnnouncementText(AlertEvent alert) {
+    return '${alert.severity.label} alert. ${_alertDialogTitle(alert)} at ${alert.zone}. ${_recommendedActionForIncident(alert)}';
+  }
+
+  Future<void> _startAlertFeedbackLoop(
+    SensorLevel level, {
+    String? announcementText,
+  }) async {
     if (level == SensorLevel.normal) return;
+    _activePageAlertLevel = level;
+    _pageAlertSoundStopped = false;
     await _primeAlertAudioByInteraction();
     await _ensureNotificationSettingsFresh();
     if (!_shouldTriggerByPushRule(level)) return;
 
-    await _triggerAlertFeedback(level, announce: true, continuous: true);
-    if (!_alertSoundEnabled) return;
+    await _triggerAlertFeedback(
+      level,
+      announce: true,
+      continuous: true,
+      announcementText: announcementText,
+    );
+  }
 
-    _alertSoundLoopTimer?.cancel();
-    _alertSoundLoopTimer = Timer(_alertSoundDuration, () {
+  void _updateActivePageAlertState(MonitoringSnapshot snapshot) {
+    final level = _highestActiveAlertLevel(snapshot.alerts);
+    if (level == SensorLevel.normal) {
+      _activePageAlertLevel = null;
+      _pageAlertSoundStopped = false;
+      _deviceBuzzerSilenced = false;
       unawaited(_stopAlertSoundLoop());
-    });
+      return;
+    }
+    _activePageAlertLevel = level;
+    unawaited(_refreshDeviceBuzzerStateIfNeeded());
+  }
+
+  SensorLevel _highestActiveAlertLevel(Iterable<AlertEvent> alerts) {
+    var hasWarning = false;
+    for (final alert in alerts) {
+      if (alert.status != IncidentStatus.active) continue;
+      if (alert.severity == SensorLevel.critical) return SensorLevel.critical;
+      if (alert.severity == SensorLevel.warning) hasWarning = true;
+    }
+    return hasWarning ? SensorLevel.warning : SensorLevel.normal;
+  }
+
+  Future<void> _resumePageAlertSoundIfNeeded() async {
+    if (!mounted || _pageAlertSoundStopped) return;
+    if (kIsWeb && !alert_audio.isAlertPageVisible()) return;
+    final level = _activePageAlertLevel ??
+        _highestActiveAlertLevel(_controller.snapshot?.alerts ?? const []);
+    if (level == SensorLevel.normal) return;
+    await _triggerAlertFeedback(level, announce: false, continuous: true);
+  }
+
+  Future<void> _showHiddenAlertNotification({
+    required String title,
+    required String body,
+    required SensorLevel severity,
+    required String tag,
+  }) async {
+    if (!kIsWeb) return;
+    if (alert_audio.isAlertPageVisible()) return;
+    if (!_shouldTriggerByPushRule(severity)) return;
+    final last = _lastHiddenAlertNotificationAt;
+    if (last != null &&
+        DateTime.now().difference(last) < _hiddenAlertNotificationCooldown) {
+      return;
+    }
+    _lastHiddenAlertNotificationAt = DateTime.now();
+    await alert_audio.showAlertNotification(
+      title: title,
+      body: body,
+      tag: tag,
+      severityLabel: severity.label.toUpperCase(),
+    );
+  }
+
+  Future<void> _refreshDeviceBuzzerStateIfNeeded({
+    bool force = false,
+    String? zoneOverride,
+  }) async {
+    if (!_controller.usingRemoteApi || _deviceBuzzerStateFetchInFlight) return;
+    final zone = zoneOverride?.trim().isNotEmpty == true
+        ? zoneOverride!.trim()
+        : _resolveActiveZoneForSilence();
+    final last = _lastDeviceBuzzerStateFetchAt;
+    if (!force &&
+        last != null &&
+        _deviceBuzzerStateZone == zone &&
+        DateTime.now().difference(last) < _deviceBuzzerStateRefreshGap) {
+      return;
+    }
+
+    _deviceBuzzerStateFetchInFlight = true;
+    try {
+      final state = await _controller.fetchBuzzerSilenceState(zone: zone);
+      if (!mounted) return;
+      setState(() {
+        _deviceBuzzerSilenced = state.silenced;
+        _deviceBuzzerStateZone = state.zone;
+        _lastDeviceBuzzerStateFetchAt = DateTime.now();
+      });
+    } catch (_) {
+      // Keep the current UI state if the cloud state check fails.
+    } finally {
+      _deviceBuzzerStateFetchInFlight = false;
+    }
   }
 
   Future<void> _stopAlertSoundLoop() async {
-    _alertSoundLoopTimer?.cancel();
-    _alertSoundLoopTimer = null;
     if (kIsWeb) {
       await alert_audio.stopAlertTone();
     }
@@ -1390,12 +1590,18 @@ class _HomeShellPageState extends State<HomeShellPage> {
     SensorLevel level, {
     required bool announce,
     bool continuous = false,
+    String? announcementText,
   }) async {
     if (level == SensorLevel.normal) return;
     await _ensureNotificationSettingsFresh();
     if (!_shouldTriggerByPushRule(level)) return;
 
-    await _playAlertSound(level, announce: announce, continuous: continuous);
+    await _playAlertSound(
+      level,
+      announce: announce,
+      continuous: continuous,
+      announcementText: announcementText,
+    );
 
     if (_supportsMobileHaptics()) {
       try {
@@ -1416,12 +1622,14 @@ class _HomeShellPageState extends State<HomeShellPage> {
     SensorLevel level, {
     required bool announce,
     bool continuous = false,
+    String? announcementText,
   }) async {
     if (!_alertSoundEnabled) return;
     try {
       if (kIsWeb) {
         await alert_audio.playAlertTone(
           severityLabel: level.label.toUpperCase(),
+          announcementText: announcementText,
           announce: announce,
           continuous: continuous,
         );
@@ -1568,26 +1776,70 @@ class _HomeShellPageState extends State<HomeShellPage> {
     }
   }
 
-  Future<void> _silenceCurrentAlertSound({String? zoneOverride}) async {
+  Future<void> _stopPageAlertSound({bool showFeedback = true}) async {
+    _pageAlertSoundStopped = true;
     await _stopAlertSoundLoop();
+    if (!mounted || !showFeedback) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Page alert sound stopped.')),
+    );
+  }
+
+  Future<void> _toggleDeviceBuzzerFromButton({
+    String? zoneOverride,
+  }) async {
+    if (_deviceBuzzerControlBusy) return;
+    if (mounted) {
+      setState(() => _deviceBuzzerControlBusy = true);
+    } else {
+      _deviceBuzzerControlBusy = true;
+    }
+    try {
+      await _setDeviceBuzzerSilenced(
+        !_deviceBuzzerSilenced,
+        zoneOverride: zoneOverride,
+      );
+    } finally {
+      if (mounted) {
+        setState(() => _deviceBuzzerControlBusy = false);
+      } else {
+        _deviceBuzzerControlBusy = false;
+      }
+    }
+  }
+
+  Future<void> _setDeviceBuzzerSilenced(
+    bool silenced, {
+    String? zoneOverride,
+  }) async {
     final zone = zoneOverride?.trim().isNotEmpty == true
         ? zoneOverride!.trim()
         : _resolveActiveZoneForSilence();
-    var message = 'Alert sound stopped.';
+    var message = silenced
+        ? 'Device buzzer silence is unavailable.'
+        : 'Device buzzer enable is unavailable.';
     if (_controller.usingRemoteApi) {
       try {
-        await _controller.silenceBuzzer(
+        final state = await _controller.setBuzzerSilence(
           zone: zone,
           role: widget.user.role,
           requestedBy: widget.user.username,
-          durationSeconds: 3600,
+          durationSeconds: silenced ? 3600 : 0,
         );
-        message = 'Alert sound stopped. Cloud buzzer silenced for 1 hour.';
+        _deviceBuzzerSilenced = state.silenced;
+        _deviceBuzzerStateZone = state.zone;
+        _lastDeviceBuzzerStateFetchAt = DateTime.now();
+        message = state.silenced
+            ? 'Device buzzer silenced for 1 hour.'
+            : 'Device buzzer enabled.';
       } catch (_) {
-        message = 'Alert sound stopped. Cloud buzzer silence failed.';
+        message = silenced
+            ? 'Device buzzer silence failed.'
+            : 'Device buzzer enable failed.';
       }
     }
     if (!mounted) return;
+    setState(() {});
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text(message)),
     );
@@ -1612,9 +1864,13 @@ class _HomeShellPageState extends State<HomeShellPage> {
     if (_alertPopupPrimed) return;
     for (final alert in snapshot.alerts) {
       if (_isAlertWithinPopupWindow(alert.timestamp)) continue;
-      _shownAlertPopups.add(alert.id);
+      _shownAlertPopups.add(_alertPopupKey(alert));
     }
     _alertPopupPrimed = true;
+  }
+
+  String _alertPopupKey(AlertEvent alert) {
+    return '${alert.id}|${alert.severity.name}|${alert.eventCount}|${alert.timestamp.toIso8601String()}';
   }
 
   bool _isAlertWithinPopupWindow(DateTime timestamp) {
