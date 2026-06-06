@@ -23,17 +23,24 @@ class SectionHeader extends StatelessWidget {
       children: [
         if (icon != null) ...[
           Container(
-            width: 34,
-            height: 34,
+            width: compact ? 30 : 34,
+            height: compact ? 30 : 34,
             decoration: BoxDecoration(
               color: UiColors.brandSoft,
               borderRadius: BorderRadius.circular(UiRadius.input),
             ),
-            child: Icon(icon, color: UiColors.brand, size: 18),
+            child: Icon(icon, color: UiColors.brand, size: compact ? 16 : 18),
           ),
-          const SizedBox(width: 10),
+          SizedBox(width: compact ? 8 : 10),
         ],
-        Expanded(child: Text(title, style: UiText.sectionTitle)),
+        Expanded(
+          child: Text(
+            title,
+            style: compact
+                ? UiText.sectionTitle.copyWith(fontSize: 17, height: 1.12)
+                : UiText.sectionTitle,
+          ),
+        ),
       ],
     );
 

@@ -51,12 +51,19 @@ class StatusBadge extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final compact = uiIsCompactLayout(context);
     final fg = uiToneColor(tone);
     final bg = uiToneSoftColor(tone);
     final border = uiToneBorderColor(tone);
     final padding = prominent
-        ? const EdgeInsets.symmetric(horizontal: 12, vertical: 7)
-        : const EdgeInsets.symmetric(horizontal: 10, vertical: 5);
+        ? EdgeInsets.symmetric(
+            horizontal: compact ? 10 : 12,
+            vertical: compact ? 6 : 7,
+          )
+        : EdgeInsets.symmetric(
+            horizontal: compact ? 8 : 10,
+            vertical: compact ? 4 : 5,
+          );
 
     return Container(
       padding: padding,
@@ -69,14 +76,18 @@ class StatusBadge extends StatelessWidget {
         mainAxisSize: MainAxisSize.min,
         children: [
           if (icon != null) ...[
-            Icon(icon, size: prominent ? 16 : 14, color: fg),
-            const SizedBox(width: 5),
+            Icon(
+              icon,
+              size: compact ? (prominent ? 14 : 12) : (prominent ? 16 : 14),
+              color: fg,
+            ),
+            SizedBox(width: compact ? 4 : 5),
           ],
           Text(
             label,
             style: TextStyle(
               color: fg,
-              fontSize: prominent ? 13 : 12,
+              fontSize: compact ? (prominent ? 11 : 10) : (prominent ? 13 : 12),
               fontWeight: FontWeight.w800,
               height: 1,
             ),

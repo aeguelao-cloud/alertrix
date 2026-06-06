@@ -20,8 +20,9 @@ class DashboardLayout extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final verticalPadding = uiIsCompactLayout(context) ? 16.0 : UiSpace.page;
-    final horizontalPadding = uiIsCompactLayout(context) ? 24.0 : 32.0;
+    final compact = uiIsCompactLayout(context);
+    final verticalPadding = compact ? 10.0 : UiSpace.page;
+    final horizontalPadding = compact ? 14.0 : 32.0;
 
     return Stack(
       children: [

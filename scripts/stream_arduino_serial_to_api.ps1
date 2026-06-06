@@ -12,10 +12,11 @@ $ErrorActionPreference = "Stop"
 function Parse-Line {
   param([string]$Line)
   # Expected sample:
-  # T=29.3,H=51.0,ADC=282,WL=0.00,ALARM=OFF,ADC_FAULT=0,OK
+  # T=29.3,H=51.0,ADC=282,WL=0.00,VIB=1.23,VIB_RMS_ADC=18.3,ALARM=OFF,ADC_FAULT=0,OK
   $result = @{
     temperature = $null
     waterLevel = $null
+    vibration = $null
   }
 
   if ($Line -match "T=([+-]?\d+(\.\d+)?)") {
@@ -23,6 +24,9 @@ function Parse-Line {
   }
   if ($Line -match "WL=([+-]?\d+(\.\d+)?)") {
     $result.waterLevel = [double]$Matches[1]
+  }
+  if ($Line -match "VIB=([+-]?\d+(\.\d+)?)") {
+    $result.vibration = [double]$Matches[1]
   }
 
   return $result
@@ -85,7 +89,10 @@ try {
     }
 
     # Optional fallback for projects without vibration hardware.
-    if ($SendVibrationFallback) {
+    if ($null -ne $parsed.vibration) {
+      Post-Reading -SensorType "vibration" -Value $parsed.vibration -CapturedAt $nowUtc
+      $posted += "vibration=$($parsed.vibration)"
+    } elseif ($SendVibrationFallback) {
       Post-Reading -SensorType "vibration" -Value $DefaultVibration -CapturedAt $nowUtc
       $posted += "vibration=$DefaultVibration"
     }

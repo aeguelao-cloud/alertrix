@@ -43,8 +43,57 @@ class AlertCard extends StatelessWidget {
     final accent = critical ? SeverityColors.critical : SeverityColors.warning;
     final valueColor =
         critical ? SeverityColors.criticalText : SeverityColors.warningText;
-    final cardPadding = compact ? 12.0 : 14.0;
+    final cardPadding = compact ? 10.0 : 14.0;
     final title = '$zone - $deviceId';
+    final detailBlock = Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          measuredValue,
+          style: UiText.body.copyWith(
+            fontWeight: FontWeight.w700,
+            color: valueColor,
+          ),
+        ),
+        const SizedBox(height: 3),
+        Text(
+          '$alertType - Threshold: $threshold',
+          style: UiText.helper,
+          maxLines: compact ? 3 : 2,
+          overflow: TextOverflow.ellipsis,
+        ),
+        Text(
+          timestamp,
+          style: UiText.helper,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+        ),
+      ],
+    );
+    final actionButtons = Wrap(
+      spacing: 8,
+      runSpacing: 6,
+      children: [
+        if (onOpen != null)
+          TextButton(
+            onPressed: onOpen,
+            style: uiLinkButton(),
+            child: const Text('View Details'),
+          ),
+        if (onAcknowledge != null)
+          TextButton(
+            onPressed: acknowledgeBusy ? null : onAcknowledge,
+            style: uiLinkButton(),
+            child: acknowledgeBusy
+                ? const SizedBox(
+                    width: 14,
+                    height: 14,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Text('Acknowledge Incident'),
+          ),
+      ],
+    );
 
     return Container(
       margin: const EdgeInsets.only(bottom: 10),
@@ -63,101 +112,110 @@ class AlertCard extends StatelessWidget {
       child: Padding(
         padding: EdgeInsets.fromLTRB(cardPadding, 6, cardPadding, cardPadding),
         child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            ListTile(
-              contentPadding: EdgeInsets.zero,
-              minVerticalPadding: 8,
-              title: Text(
+            if (compact) ...[
+              const SizedBox(height: 8),
+              Text(
                 title,
                 style: UiText.cardTitle.copyWith(
+                  fontSize: 13.5,
                   fontWeight: FontWeight.w800,
                   color: UiColors.textStrong,
                 ),
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
               ),
-              subtitle: Padding(
-                padding: const EdgeInsets.only(top: 6),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      measuredValue,
-                      style: UiText.body.copyWith(
-                        fontWeight: FontWeight.w700,
-                        color: valueColor,
-                      ),
-                    ),
-                    const SizedBox(height: 3),
-                    Text(
-                      '$alertType - Threshold: $threshold',
-                      style: UiText.helper,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                    Text(
-                      timestamp,
-                      style: UiText.helper,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  ],
-                ),
-              ),
-              trailing: ConstrainedBox(
-                constraints: const BoxConstraints(maxWidth: 120),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.end,
-                  children: [
-                    UiSeverityPill(
-                      label: critical ? 'Critical' : 'Warning',
-                      tone: tone,
-                    ),
-                    const SizedBox(height: 6),
-                    Text(
-                      status,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: UiText.helper.copyWith(
-                        fontWeight: FontWeight.w700,
-                        color: UiColors.textBody,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-            if (onOpen != null || onAcknowledge != null) ...[
-              const SizedBox(height: 4),
-              Row(
+              const SizedBox(height: 7),
+              Wrap(
+                spacing: 8,
+                runSpacing: 6,
+                crossAxisAlignment: WrapCrossAlignment.center,
                 children: [
-                  Expanded(
-                    child: occurrences == null
-                        ? const SizedBox.shrink()
-                        : Text(
-                            'Occurrences: $occurrences events',
-                            style: UiText.helper,
-                          ),
+                  UiSeverityPill(
+                    label: critical ? 'Critical' : 'Warning',
+                    tone: tone,
                   ),
-                  if (onOpen != null)
-                    TextButton(
-                      onPressed: onOpen,
-                      style: uiLinkButton(),
-                      child: const Text('View Details'),
+                  Text(
+                    status,
+                    style: UiText.helper.copyWith(
+                      fontWeight: FontWeight.w700,
+                      color: UiColors.textBody,
                     ),
-                  if (onAcknowledge != null)
-                    TextButton(
-                      onPressed: acknowledgeBusy ? null : onAcknowledge,
-                      style: uiLinkButton(),
-                      child: acknowledgeBusy
-                          ? const SizedBox(
-                              width: 14,
-                              height: 14,
-                              child: CircularProgressIndicator(strokeWidth: 2),
-                            )
-                          : const Text('Acknowledge Incident'),
-                    ),
+                  ),
                 ],
               ),
+              const SizedBox(height: 7),
+              detailBlock,
+            ] else ...[
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                minVerticalPadding: 8,
+                title: Text(
+                  title,
+                  style: UiText.cardTitle.copyWith(
+                    fontWeight: FontWeight.w800,
+                    color: UiColors.textStrong,
+                  ),
+                ),
+                subtitle: Padding(
+                  padding: const EdgeInsets.only(top: 6),
+                  child: detailBlock,
+                ),
+                trailing: ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 120),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.end,
+                    children: [
+                      UiSeverityPill(
+                        label: critical ? 'Critical' : 'Warning',
+                        tone: tone,
+                      ),
+                      const SizedBox(height: 6),
+                      Text(
+                        status,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: UiText.helper.copyWith(
+                          fontWeight: FontWeight.w700,
+                          color: UiColors.textBody,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+            if (onOpen != null || onAcknowledge != null) ...[
+              const SizedBox(height: 8),
+              if (compact)
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    if (occurrences != null) ...[
+                      Text(
+                        'Occurrences: $occurrences events',
+                        style: UiText.helper,
+                      ),
+                      const SizedBox(height: 4),
+                    ],
+                    actionButtons,
+                  ],
+                )
+              else
+                Row(
+                  children: [
+                    Expanded(
+                        child: occurrences == null
+                            ? const SizedBox.shrink()
+                            : Text(
+                                'Occurrences: $occurrences events',
+                                style: UiText.helper,
+                              )),
+                    actionButtons,
+                  ],
+                ),
             ],
           ],
         ),

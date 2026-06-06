@@ -221,11 +221,14 @@ class _HomeShellPageState extends State<HomeShellPage>
   Widget _buildCompactScaffold(MonitoringSnapshot? snapshot) {
     return Scaffold(
       appBar: AppBar(
-        toolbarHeight: 58,
+        toolbarHeight: 50,
+        leadingWidth: 44,
         titleSpacing: 8,
         leading: IconButton(
           tooltip: 'All pages',
           onPressed: _openCompactNavigationSheet,
+          iconSize: 22,
+          visualDensity: VisualDensity.compact,
           icon: const Icon(Icons.menu_rounded),
         ),
         title: _buildCompactTopBarTitle(),
@@ -259,19 +262,16 @@ class _HomeShellPageState extends State<HomeShellPage>
           Container(
             margin: EdgeInsets.fromLTRB(
               compactPadding.left,
-              UiSpace.gap,
+              8,
               compactPadding.right,
               0,
             ),
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+            padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 7),
             decoration: BoxDecoration(
               color: UiColors.surface,
               borderRadius: BorderRadius.circular(UiRadius.button),
             ),
-            child: SingleChildScrollView(
-              scrollDirection: Axis.horizontal,
-              child: _buildTopStatusPills(),
-            ),
+            child: _buildTopStatusPills(compact: true),
           ),
           SizedBox(height: uiSectionSpacing(context)),
           Expanded(child: _buildPage(snapshot)),
@@ -483,7 +483,7 @@ class _HomeShellPageState extends State<HomeShellPage>
       ...primary.map(
         (navIndex) => NavigationDestination(
           icon: Icon(_navItems[navIndex].icon),
-          label: _navItems[navIndex].label,
+          label: _compactNavLabel(navIndex),
         ),
       ),
       const NavigationDestination(
@@ -492,6 +492,7 @@ class _HomeShellPageState extends State<HomeShellPage>
       ),
     ];
     return NavigationBar(
+      height: 60,
       selectedIndex: _compactSelectedBarIndex,
       onDestinationSelected: (destinationIndex) {
         if (destinationIndex < primary.length) {
@@ -502,6 +503,19 @@ class _HomeShellPageState extends State<HomeShellPage>
       },
       destinations: destinations,
     );
+  }
+
+  String _compactNavLabel(int navIndex) {
+    return switch (navIndex) {
+      _navDashboard => 'Overview',
+      _navTrends => 'Trends',
+      _navAlerts => 'Incidents',
+      _navWorkOrders => 'Orders',
+      _navDevices => 'Devices',
+      _navSettings => 'Settings',
+      _navAdminManagement => 'Admins',
+      _ => _navItems[navIndex].label,
+    };
   }
 
   void _handleControllerSideEffects() {
@@ -586,7 +600,7 @@ class _HomeShellPageState extends State<HomeShellPage>
     );
   }
 
-  Widget _buildTopStatusPills() {
+  Widget _buildTopStatusPills({bool compact = false}) {
     final ready = (_pushToken?.isNotEmpty ?? false);
     final disabled = _isPushDisabledMessage(_pushStatusMessage);
     final hasCloudError = _controller.errorMessage != null;
@@ -603,32 +617,51 @@ class _HomeShellPageState extends State<HomeShellPage>
         : (disabled ? _TopStatusTone.neutral : _TopStatusTone.warning);
     final syncText = lastSync == null ? '--' : _formatHeaderTime(lastSync);
 
-    return Row(
-      children: [
-        _buildTopStatusPill(
-          label: 'Cloud Sync',
-          value: cloudLabel,
-          tone: cloudTone,
-        ),
-        _buildTopStatusPill(
-          label: 'Last Sync',
-          value: syncText,
-          tone: _TopStatusTone.neutral,
-        ),
-        _buildTopStatusPill(
-          label: 'API',
-          value: apiLabel,
-          tone: _controller.usingRemoteApi
-              ? _TopStatusTone.healthy
-              : _TopStatusTone.warning,
-        ),
-        _buildTopStatusPill(
-          label: 'Push',
-          value: pushLabel,
-          tone: pushTone,
-        ),
-      ],
-    );
+    final pills = [
+      (
+        label: 'Cloud Sync',
+        value: cloudLabel,
+        tone: cloudTone,
+      ),
+      (
+        label: 'Last Sync',
+        value: syncText,
+        tone: _TopStatusTone.neutral,
+      ),
+      (
+        label: 'API',
+        value: apiLabel,
+        tone: _controller.usingRemoteApi
+            ? _TopStatusTone.healthy
+            : _TopStatusTone.warning,
+      ),
+      (
+        label: 'Push',
+        value: pushLabel,
+        tone: pushTone,
+      ),
+    ];
+
+    final children = pills
+        .map(
+          (pill) => _buildTopStatusPill(
+            label: pill.label,
+            value: pill.value,
+            tone: pill.tone,
+            compact: compact,
+          ),
+        )
+        .toList(growable: false);
+
+    if (compact) {
+      return Wrap(
+        spacing: 6,
+        runSpacing: 6,
+        children: children,
+      );
+    }
+
+    return Row(children: children);
   }
 
   Widget _buildRefreshActionButton() {
@@ -763,6 +796,7 @@ class _HomeShellPageState extends State<HomeShellPage>
     required String label,
     required String value,
     required _TopStatusTone tone,
+    bool compact = false,
   }) {
     final (bg, text) = switch (tone) {
       _TopStatusTone.healthy => (
@@ -784,16 +818,21 @@ class _HomeShellPageState extends State<HomeShellPage>
     };
 
     return Container(
-      margin: const EdgeInsets.only(right: 6),
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+      margin: compact ? EdgeInsets.zero : const EdgeInsets.only(right: 6),
+      padding: EdgeInsets.symmetric(
+        horizontal: compact ? 7 : 8,
+        vertical: compact ? 4 : 5,
+      ),
       decoration: BoxDecoration(
         color: bg,
         borderRadius: BorderRadius.circular(14),
       ),
       child: Text(
         '$label: $value',
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
         style: TextStyle(
-          fontSize: 11,
+          fontSize: compact ? 9.5 : 11,
           fontWeight: FontWeight.w700,
           color: text,
         ),
@@ -867,6 +906,7 @@ class _HomeShellPageState extends State<HomeShellPage>
           snapshot: snapshot,
           isAdminView: _isAdmin,
           alertsLabel: _alertsNavLabel,
+          apiBaseUrl: _controller.apiBaseUrl,
           onOpenAlertDetail: _openAlertDetail,
           onNavigateToAlerts: () => setState(() => _selectedIndex = 2),
           onNavigateToDevices: () =>
@@ -877,7 +917,7 @@ class _HomeShellPageState extends State<HomeShellPage>
       case 1:
         return TrendsPage(
           snapshot: snapshot,
-          apiBaseUrl: widget.apiBaseUrl,
+          apiBaseUrl: _controller.apiBaseUrl,
           refreshToken: _refreshToken,
         );
       case 2:

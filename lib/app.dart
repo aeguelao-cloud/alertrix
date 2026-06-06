@@ -38,6 +38,21 @@ class _AlertrixAppState extends State<AlertrixApp> {
         return MaterialApp(
           debugShowCheckedModeBanner: false,
           title: 'Alertrix Response Overview',
+          builder: (context, child) {
+            final media = MediaQuery.maybeOf(context);
+            if (media == null || child == null) {
+              return child ?? const SizedBox.shrink();
+            }
+            if (media.size.width >= 600) return child;
+            final userScale = media.textScaler.scale(1);
+            final compactScale = (userScale * 0.88).clamp(0.82, 1.04);
+            return MediaQuery(
+              data: media.copyWith(
+                textScaler: TextScaler.linear(compactScale.toDouble()),
+              ),
+              child: child,
+            );
+          },
           theme: ThemeData(
             fontFamily: 'Segoe UI',
             fontFamilyFallback: const ['Inter', 'Arial', 'sans-serif'],

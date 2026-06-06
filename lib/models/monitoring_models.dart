@@ -186,6 +186,19 @@ class SensorTelemetryState {
   final double? value;
 }
 
+class SensorTrendSeries {
+  const SensorTrendSeries({
+    required this.values,
+    required this.timestamps,
+  });
+
+  final List<double> values;
+  final List<DateTime> timestamps;
+
+  bool get hasTimedValues =>
+      values.isNotEmpty && timestamps.length == values.length;
+}
+
 class DashboardOverview {
   const DashboardOverview({
     required this.systemStatus,

@@ -40,11 +40,11 @@ bool uiIsCompactLayout(BuildContext context) {
 
 EdgeInsets uiPagePadding(BuildContext context) {
   final compact = uiIsCompactLayout(context);
-  return EdgeInsets.all(compact ? 14 : UiSpace.page);
+  return EdgeInsets.all(compact ? 10 : UiSpace.page);
 }
 
 double uiSectionSpacing(BuildContext context) {
-  return uiIsCompactLayout(context) ? 18 : UiSpace.section;
+  return uiIsCompactLayout(context) ? 12 : UiSpace.section;
 }
 
 class UiRadius {
@@ -104,13 +104,13 @@ ButtonStyle uiPrimaryButton() {
   return FilledButton.styleFrom(
     backgroundColor: UiColors.brand,
     foregroundColor: Colors.white,
-    minimumSize: const Size(0, 48),
-    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+    minimumSize: const Size(0, 42),
+    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
     elevation: 0,
     shape: RoundedRectangleBorder(
       borderRadius: BorderRadius.circular(UiRadius.button),
     ),
-    textStyle: const TextStyle(fontSize: 14, fontWeight: FontWeight.w800),
+    textStyle: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w800),
   );
 }
 
@@ -119,12 +119,12 @@ ButtonStyle uiSecondaryButton() {
     foregroundColor: UiColors.textStrong,
     backgroundColor: Colors.white,
     side: const BorderSide(color: UiColors.borderStrong),
-    minimumSize: const Size(0, 46),
-    padding: const EdgeInsets.symmetric(horizontal: 15, vertical: 11),
+    minimumSize: const Size(0, 40),
+    padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 9),
     shape: RoundedRectangleBorder(
       borderRadius: BorderRadius.circular(UiRadius.button),
     ),
-    textStyle: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
+    textStyle: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w600),
   );
 }
 
@@ -133,12 +133,12 @@ ButtonStyle uiDangerButton() {
     foregroundColor: UiColors.danger,
     backgroundColor: Colors.white,
     side: const BorderSide(color: Color(0xFFF2B2B2)),
-    minimumSize: const Size(0, 46),
-    padding: const EdgeInsets.symmetric(horizontal: 15, vertical: 11),
+    minimumSize: const Size(0, 40),
+    padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 9),
     shape: RoundedRectangleBorder(
       borderRadius: BorderRadius.circular(UiRadius.button),
     ),
-    textStyle: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
+    textStyle: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w600),
   );
 }
 
@@ -146,9 +146,9 @@ ButtonStyle uiLinkButton() {
   return TextButton.styleFrom(
     foregroundColor: UiColors.brand,
     minimumSize: const Size(0, 0),
-    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
     tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-    textStyle: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
+    textStyle: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w600),
   );
 }
 
@@ -206,8 +206,12 @@ class UiBadge extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final compact = uiIsCompactLayout(context);
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+      padding: EdgeInsets.symmetric(
+        horizontal: compact ? 8 : 10,
+        vertical: compact ? 3 : 4,
+      ),
       decoration: BoxDecoration(
         color: uiToneSoftColor(tone),
         borderRadius: BorderRadius.circular(UiRadius.pill),
@@ -217,7 +221,7 @@ class UiBadge extends StatelessWidget {
       child: Text(
         label,
         style: TextStyle(
-          fontSize: 12,
+          fontSize: compact ? 10 : 12,
           fontWeight: FontWeight.w800,
           color: uiToneColor(tone),
         ),
@@ -240,12 +244,19 @@ class UiCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final compact = uiIsCompactLayout(context);
     final borderAlpha = big ? 0.74 : 0.62;
+    const defaultPadding = EdgeInsets.all(UiSpace.card);
+    final effectivePadding = compact && padding == defaultPadding
+        ? const EdgeInsets.all(12)
+        : padding;
     return Container(
-      padding: padding,
+      padding: effectivePadding,
       decoration: BoxDecoration(
         color: UiColors.surface,
-        borderRadius: BorderRadius.circular(big ? UiRadius.big : UiRadius.card),
+        borderRadius: BorderRadius.circular(
+          compact ? (big ? 16 : 14) : (big ? UiRadius.big : UiRadius.card),
+        ),
         border: Border.all(
           color: UiColors.border.withValues(alpha: borderAlpha),
         ),
@@ -347,8 +358,8 @@ class UiPageHeader extends StatelessWidget {
   Widget build(BuildContext context) {
     final compact = uiIsCompactLayout(context);
     final titleStyle = UiText.pageTitle.copyWith(
-      fontSize: compact ? 25 : UiText.pageTitle.fontSize,
-      height: compact ? 1.16 : UiText.pageTitle.height,
+      fontSize: compact ? 21 : UiText.pageTitle.fontSize,
+      height: compact ? 1.14 : UiText.pageTitle.height,
     );
     if (compact && trailing != null) {
       return Column(
@@ -356,10 +367,10 @@ class UiPageHeader extends StatelessWidget {
         children: [
           Container(
             width: double.infinity,
-            padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
+            padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
             decoration: BoxDecoration(
               color: UiColors.surface,
-              borderRadius: BorderRadius.circular(UiRadius.card),
+              borderRadius: BorderRadius.circular(14),
               border: Border.all(color: UiColors.border),
             ),
             child: Column(
@@ -370,7 +381,10 @@ class UiPageHeader extends StatelessWidget {
                 Text(title, style: titleStyle),
                 if (subtitle != null) ...[
                   const SizedBox(height: 6),
-                  Text(subtitle!, style: UiText.body),
+                  Text(
+                    subtitle!,
+                    style: UiText.body.copyWith(fontSize: 12.5, height: 1.34),
+                  ),
                 ],
               ],
             ),
@@ -502,10 +516,11 @@ class UiSeverityPill extends StatelessWidget {
         critical ? SeverityColors.criticalText : SeverityColors.warningText;
     final border =
         critical ? SeverityColors.criticalBorder : SeverityColors.warningBorder;
+    final compact = uiIsCompactLayout(context);
 
     return Container(
-      height: 26,
-      padding: const EdgeInsets.symmetric(horizontal: 10),
+      height: compact ? 22 : 26,
+      padding: EdgeInsets.symmetric(horizontal: compact ? 8 : 10),
       decoration: BoxDecoration(
         color: bg,
         borderRadius: BorderRadius.circular(UiRadius.pill),
@@ -515,7 +530,7 @@ class UiSeverityPill extends StatelessWidget {
       child: Text(
         label,
         style: TextStyle(
-          fontSize: 12,
+          fontSize: compact ? 10 : 12,
           fontWeight: FontWeight.w700,
           color: fg,
           height: 1,

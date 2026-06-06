@@ -33,6 +33,8 @@ class _LoginPageState extends State<LoginPage> {
       TextEditingController();
   final TextEditingController _emailController = TextEditingController();
   final TextEditingController _codeController = TextEditingController();
+  final FocusNode _registerPasswordFocusNode = FocusNode();
+  final FocusNode _registerConfirmPasswordFocusNode = FocusNode();
 
   bool _registerMode = false;
   bool _busy = false;
@@ -42,6 +44,8 @@ class _LoginPageState extends State<LoginPage> {
   int _sendCodeSecondsLeft = 0;
   bool _hasSentCode = false;
   Timer? _sendCodeTimer;
+  bool _registerPasswordReadyForInput = false;
+  bool _registerConfirmPasswordReadyForInput = false;
   bool _obscureLoginPassword = true;
   bool _obscureRegisterPassword = true;
   bool _obscureRegisterConfirmPassword = true;
@@ -58,6 +62,8 @@ class _LoginPageState extends State<LoginPage> {
     _confirmPasswordController.dispose();
     _emailController.dispose();
     _codeController.dispose();
+    _registerPasswordFocusNode.dispose();
+    _registerConfirmPasswordFocusNode.dispose();
     super.dispose();
   }
 
@@ -257,7 +263,7 @@ class _LoginPageState extends State<LoginPage> {
           Text(
             title,
             style: TextStyle(
-              fontSize: compact ? 34 : 44,
+              fontSize: compact ? 28 : 44,
               fontWeight: FontWeight.w800,
               height: 1.02,
               color: UiColors.textStrong,
@@ -425,6 +431,7 @@ class _LoginPageState extends State<LoginPage> {
         hintText: 'Username',
         textInputAction: TextInputAction.next,
         prefixIcon: Icons.person_outline_rounded,
+        onChanged: _handleVerificationIdentityChanged,
         onSubmitted: (_) => FocusScope.of(context).nextFocus(),
       ),
       const SizedBox(height: 12),
@@ -435,6 +442,7 @@ class _LoginPageState extends State<LoginPage> {
         keyboardType: TextInputType.emailAddress,
         textInputAction: TextInputAction.next,
         prefixIcon: Icons.mail_outline_rounded,
+        onChanged: _handleVerificationIdentityChanged,
         onSubmitted: (_) => FocusScope.of(context).nextFocus(),
       ),
       const SizedBox(height: 12),
@@ -478,11 +486,21 @@ class _LoginPageState extends State<LoginPage> {
       _buildFieldLabel('Password'),
       _buildInput(
         controller: _passwordController,
+        focusNode: _registerPasswordFocusNode,
         hintText: 'Password',
         obscureText: _obscureRegisterPassword,
+        keyboardType: TextInputType.visiblePassword,
         textInputAction: TextInputAction.next,
         prefixIcon: Icons.lock_outline_rounded,
-        autofillHints: const <String>[],
+        autofillHints: const [AutofillHints.newPassword],
+        enableSuggestions: false,
+        autocorrect: false,
+        enableIMEPersonalizedLearning: false,
+        readOnly: !_registerPasswordReadyForInput,
+        onTap: () => _enableRegisterPasswordInput(
+          focusNode: _registerPasswordFocusNode,
+          confirmPassword: false,
+        ),
         onSubmitted: (_) => FocusScope.of(context).nextFocus(),
         suffixIcon: _buildPasswordToggle(
           obscured: _obscureRegisterPassword,
@@ -501,11 +519,21 @@ class _LoginPageState extends State<LoginPage> {
       _buildFieldLabel('Confirm password'),
       _buildInput(
         controller: _confirmPasswordController,
+        focusNode: _registerConfirmPasswordFocusNode,
         hintText: 'Confirm password',
         obscureText: _obscureRegisterConfirmPassword,
+        keyboardType: TextInputType.visiblePassword,
         textInputAction: TextInputAction.done,
         prefixIcon: Icons.lock_person_outlined,
-        autofillHints: const <String>[],
+        autofillHints: const [AutofillHints.newPassword],
+        enableSuggestions: false,
+        autocorrect: false,
+        enableIMEPersonalizedLearning: false,
+        readOnly: !_registerConfirmPasswordReadyForInput,
+        onTap: () => _enableRegisterPasswordInput(
+          focusNode: _registerConfirmPasswordFocusNode,
+          confirmPassword: true,
+        ),
         onSubmitted: (_) => _submitRegisterWithKeyboard(),
         suffixIcon: _buildPasswordToggle(
           obscured: _obscureRegisterConfirmPassword,
@@ -627,28 +655,40 @@ class _LoginPageState extends State<LoginPage> {
 
   Widget _buildInput({
     required TextEditingController controller,
+    FocusNode? focusNode,
     required String hintText,
     bool obscureText = false,
     TextInputType? keyboardType,
     List<TextInputFormatter>? inputFormatters,
     Iterable<String>? autofillHints,
+    bool enableSuggestions = true,
+    bool autocorrect = true,
+    bool enableIMEPersonalizedLearning = true,
+    bool readOnly = false,
     IconData? prefixIcon,
     Widget? suffixIcon,
     TextInputAction? textInputAction,
     ValueChanged<String>? onSubmitted,
     ValueChanged<String>? onChanged,
+    GestureTapCallback? onTap,
   }) {
     return SizedBox(
       height: 56,
       child: TextField(
         controller: controller,
+        focusNode: focusNode,
         obscureText: obscureText,
         keyboardType: keyboardType,
         inputFormatters: inputFormatters,
         autofillHints: autofillHints,
+        enableSuggestions: enableSuggestions,
+        autocorrect: autocorrect,
+        enableIMEPersonalizedLearning: enableIMEPersonalizedLearning,
+        readOnly: readOnly,
         textInputAction: textInputAction,
         onSubmitted: onSubmitted,
         onChanged: onChanged,
+        onTap: onTap,
         style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w500),
         decoration: _inputDecoration(
           hintText,
@@ -721,10 +761,53 @@ class _LoginPageState extends State<LoginPage> {
       _errorText = null;
       _passwordController.clear();
       _confirmPasswordController.clear();
-      if (!registerMode) {
-        _codeController.clear();
+      _registerPasswordReadyForInput = false;
+      _registerConfirmPasswordReadyForInput = false;
+      _resetSendCodeState();
+    });
+  }
+
+  void _enableRegisterPasswordInput({
+    required FocusNode focusNode,
+    required bool confirmPassword,
+  }) {
+    final alreadyReady = confirmPassword
+        ? _registerConfirmPasswordReadyForInput
+        : _registerPasswordReadyForInput;
+    if (alreadyReady) return;
+
+    setState(() {
+      if (confirmPassword) {
+        _registerConfirmPasswordReadyForInput = true;
+      } else {
+        _registerPasswordReadyForInput = true;
       }
     });
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) focusNode.requestFocus();
+    });
+  }
+
+  void _handleVerificationIdentityChanged(String _) {
+    if (_errorText == null &&
+        !_hasSentCode &&
+        _sendCodeSecondsLeft == 0 &&
+        _codeController.text.isEmpty) {
+      return;
+    }
+    setState(() {
+      _errorText = null;
+      _resetSendCodeState();
+    });
+  }
+
+  void _resetSendCodeState() {
+    _sendCodeTimer?.cancel();
+    _sendCodeTimer = null;
+    _sendCodeSecondsLeft = 0;
+    _hasSentCode = false;
+    _codeController.clear();
   }
 
   Future<void> _sendCode() async {
@@ -842,7 +925,7 @@ class _LoginPageState extends State<LoginPage> {
     final password = _passwordController.text;
     final emailLower = email.toLowerCase();
 
-    if (emailLower == 'admin@alertrix.local') {
+    if (!_hasApi && emailLower == 'admin@alertrix.local') {
       if (password == 'Admin@123') {
         // Keep internal admin id aligned with backend admin guard.
         widget.onLogin(emailLower, UserRole.admin);

@@ -1,1 +1,0 @@
-{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":["iot:Connect"],"Resource":["arn:aws:iot:ap-southeast-5:*:client/alertrix-esp32-node01"]},{"Effect":"Allow","Action":["iot:Publish"],"Resource":["arn:aws:iot:ap-southeast-5:*:topic/alertrix/sensors/ingest"]}]}

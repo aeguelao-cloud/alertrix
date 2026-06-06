@@ -23,8 +23,9 @@ class SensorCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final metricColor = sensorColorOf(sensor.type);
     final critical = sensor.level == SensorLevel.critical;
+    final compact = uiIsCompactLayout(context);
     return UiCard(
-      padding: const EdgeInsets.all(16),
+      padding: EdgeInsets.all(compact ? 12 : 16),
       big: critical,
       child: Padding(
         padding: EdgeInsets.zero,
@@ -34,18 +35,22 @@ class SensorCard extends StatelessWidget {
             Row(
               children: [
                 Container(
-                  padding: const EdgeInsets.all(8),
+                  padding: EdgeInsets.all(compact ? 7 : 8),
                   decoration: BoxDecoration(
                     color: metricColor.withValues(alpha: 0.12),
                     borderRadius: BorderRadius.circular(10),
                   ),
-                  child: Icon(sensor.type.icon, color: metricColor),
+                  child: Icon(
+                    sensor.type.icon,
+                    color: metricColor,
+                    size: compact ? 20 : 24,
+                  ),
                 ),
                 const Spacer(),
                 StatusBadge.fromLevel(sensor.level, prominent: critical),
               ],
             ),
-            const SizedBox(height: 14),
+            SizedBox(height: compact ? 10 : 14),
             Text(
               sensor.type.label,
               style: UiText.cardTitle,
@@ -59,10 +64,10 @@ class SensorCard extends StatelessWidget {
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
             ),
-            const SizedBox(height: 16),
+            SizedBox(height: compact ? 10 : 16),
             Text(
               sensor.formattedValue,
-              style: UiText.bigNumber.copyWith(fontSize: 34),
+              style: UiText.bigNumber.copyWith(fontSize: compact ? 28 : 34),
             ),
             const SizedBox(height: 2),
             Row(
@@ -93,7 +98,7 @@ class SensorCard extends StatelessWidget {
               ],
             ),
             if (updatedAt != null) ...[
-              const SizedBox(height: 12),
+              SizedBox(height: compact ? 8 : 12),
               Container(
                 width: double.infinity,
                 padding:

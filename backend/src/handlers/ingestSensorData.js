@@ -21,7 +21,7 @@ const {
   normalizeIncidentRecord,
 } = require("../common/incidents");
 
-const EMAIL_COOLDOWN_SECONDS = Number(process.env.EMAIL_COOLDOWN_SECONDS || 86400);
+const EMAIL_COOLDOWN_SECONDS = Number(process.env.EMAIL_COOLDOWN_SECONDS || 60);
 const CORRELATION_STATUS_INDEX_NAME = process.env.INCIDENT_CORRELATION_STATUS_INDEX_NAME || "CorrelationStatusIndex";
 
 exports.handler = async (event) => {
@@ -150,17 +150,17 @@ exports.handler = async (event) => {
         severity,
         measuredValue,
       });
-      emailResult = await emailNewIncident({
-        incident,
-        sensorType,
-        zone,
-        severity,
-        value,
-        unit: threshold.unit,
-        threshold,
-        capturedAt,
-      });
     }
+    emailResult = await emailAlertWithCooldown({
+      incident,
+      sensorType,
+      zone,
+      severity,
+      value,
+      unit: threshold.unit,
+      threshold,
+      capturedAt,
+    });
 
     return ok({
       stored: true,
@@ -452,7 +452,7 @@ async function notifyNewIncident({ incident, sensorType, zone, severity, measure
   }
 }
 
-async function emailNewIncident({ incident, sensorType, zone, severity, value, unit, threshold, capturedAt }) {
+async function emailAlertWithCooldown({ incident, sensorType, zone, severity, value, unit, threshold, capturedAt }) {
   const emailGate = await shouldSendEmailNow({ zone, severity, capturedAt });
   if (!emailGate.allowed) {
     return {

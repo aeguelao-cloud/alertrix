@@ -1284,22 +1284,25 @@ class _TopStatGrid extends StatelessWidget {
     return LayoutBuilder(
       builder: (context, constraints) {
         final singleColumn = uiIsCompactLayout(context);
+        final compactSpacing = compact ? 10.0 : UiSpace.gap;
         final width = constraints.maxWidth >= 1200
             ? (constraints.maxWidth - UiSpace.gap * 3) / 4
             : !singleColumn && constraints.maxWidth >= 760
                 ? (constraints.maxWidth - UiSpace.gap) / 2
-                : constraints.maxWidth;
+                : compact && constraints.maxWidth >= 320
+                    ? (constraints.maxWidth - compactSpacing) / 2
+                    : constraints.maxWidth;
         return Wrap(
-          spacing: UiSpace.gap,
-          runSpacing: UiSpace.gap,
+          spacing: compactSpacing,
+          runSpacing: compactSpacing,
           children: items
               .map(
                 (item) => SizedBox(
                   width: width,
                   child: UiCard(
                     padding: const EdgeInsets.symmetric(
-                      horizontal: 14,
-                      vertical: 12,
+                      horizontal: 12,
+                      vertical: 10,
                     ),
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
@@ -1322,7 +1325,7 @@ class _TopStatGrid extends StatelessWidget {
                                   Text(
                                     item.value,
                                     style:
-                                        UiText.bigNumber.copyWith(fontSize: 30),
+                                        UiText.bigNumber.copyWith(fontSize: 22),
                                   ),
                                   _MutedStatBadge(
                                     label: item.label,

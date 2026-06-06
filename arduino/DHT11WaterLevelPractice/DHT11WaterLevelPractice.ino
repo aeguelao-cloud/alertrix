@@ -31,6 +31,10 @@ const float DHT_VALID_HUM_MAX = 100.0f;
 const int ADC_FAULT_LOW = 50;
 const int ADC_FAULT_HIGH = 4050;
 const uint8_t ADC_FAULT_CONSECUTIVE = 4;
+const int WATER_SHORT_ADC_LOW = 120;
+const uint8_t WATER_SHORT_CONSECUTIVE = 2;
+const float WATER_ADC_FILTER_ALPHA = 0.15f;
+const float WATER_ALERT_RELEASE_MARGIN_PERCENT = 5.0f;
 
 // ===== Cloud uplink =====
 #ifndef WIFI_SSID_SECRET
@@ -44,7 +48,7 @@ const char* WIFI_SSID = WIFI_SSID_SECRET;
 const char* WIFI_PASSWORD = WIFI_PASSWORD_SECRET;
 const char* API_BASE_URL = "https://b4sm23mlze.execute-api.ap-southeast-5.amazonaws.com/prod";
 const char* SITE_ZONE = "Zone A - Pump Station";
-const char* FW_BUILD_ID = "FW_2026_06_04_CONTINUOUS_BUZZER_REAL_VIB";
+const char* FW_BUILD_ID = "FW_2026_06_05_WATER_SMOOTH_1300_1800";
 
 // MQTT first, with optional HTTP fallback if MQTT publish fails.
 const bool USE_MQTT_UPLINK = true;
@@ -65,14 +69,16 @@ const char* AWS_IOT_PRIVATE_KEY = MQTT_DEVICE_PRIVATE_KEY;
 const int VIBRATION_SAMPLE_COUNT = 120;
 const unsigned long VIBRATION_SAMPLE_DELAY_US = 1000;
 const float VIBRATION_RMS_ADC_PER_UNIT = 12.0f;
+const float VIBRATION_NOISE_DEADBAND_ADC = 24.0f;
 const float VIBRATION_LEVEL_MAX = 20.0f;
-const uint8_t VIBRATION_BASELINE_WINDOWS = 8;
+const uint8_t VIBRATION_BASELINE_WINDOWS = 40;
+const unsigned long VIBRATION_STARTUP_REZERO_MS = 12000;
 
 // Calibrate these two values using your own sensor:
 // 1) dryValue: sensor out of water
 // 2) wetValue: sensor in water at your "full" reference level
-int dryValue = 700;
-int wetValue = 1700;
+int dryValue = 1300;
+int wetValue = 1800;
 
 // Water can be sampled quickly, DHT11 should be read more slowly for stability.
 const unsigned long WATER_READ_INTERVAL_MS = 500;
@@ -82,6 +88,7 @@ unsigned long lastDhtReadMs = 0;
 float lastTempC = NAN;
 float lastHum = NAN;
 uint8_t waterAdcFaultCount = 0;
+uint8_t waterShortFaultCount = 0;
 unsigned long lastWifiRetryMs = 0;
 unsigned long wifiConnectStartMs = 0;
 unsigned long lastWaterPostMs = 0;
@@ -90,6 +97,7 @@ unsigned long lastVibrationPostMs = 0;
 int lastVibrationPeakToPeakAdc = 0;
 float lastVibrationRmsAdc = 0.0f;
 float vibrationBaselineRmsAdc = 0.0f;
+bool vibrationStartupRezeroDone = false;
 
 enum AlertSeverity : uint8_t {
   ALERT_NONE = 0,
@@ -97,12 +105,17 @@ enum AlertSeverity : uint8_t {
   ALERT_CRITICAL = 2,
 };
 
+float filteredWaterAdc = NAN;
+AlertSeverity waterAlertState = ALERT_NONE;
+
 struct VibrationStats {
   int peakToPeakAdc;
   float rmsAdc;
 };
 
 float adcToWaterLevelPercent(int adcValue);
+float updateWaterAdcFilter(int rawAdc);
+AlertSeverity waterSeverityForLevel(float value);
 void printWaterCalibrationStatus();
 VibrationStats readVibrationStats();
 void calibrateVibrationBaseline(uint8_t windows);
@@ -356,14 +369,28 @@ bool fetchCloudBuzzerSilenced() {
 #endif
 
 int readWaterAdc() {
-  // Small averaging to reduce jitter.
-  const int samples = 10;
+  // Trim one high and one low sample, then average the rest.
+  const int samples = 20;
   long sum = 0;
+  int minValue = 4095;
+  int maxValue = 0;
   for (int i = 0; i < samples; i++) {
-    sum += analogRead(WATER_SENSOR_AO_PIN);
+    const int value = analogRead(WATER_SENSOR_AO_PIN);
+    sum += value;
+    if (value < minValue) minValue = value;
+    if (value > maxValue) maxValue = value;
     delay(5);
   }
-  return (int)(sum / samples);
+  return (int)((sum - minValue - maxValue) / (samples - 2));
+}
+
+float updateWaterAdcFilter(int rawAdc) {
+  if (isnan(filteredWaterAdc)) {
+    filteredWaterAdc = (float)rawAdc;
+  } else {
+    filteredWaterAdc += WATER_ADC_FILTER_ALPHA * ((float)rawAdc - filteredWaterAdc);
+  }
+  return filteredWaterAdc;
 }
 
 float clampVibrationLevel(float level) {
@@ -389,6 +416,29 @@ AlertSeverity severityForValue(float value, float warningThreshold, float critic
   if (value >= criticalThreshold) return ALERT_CRITICAL;
   if (value >= warningThreshold) return ALERT_WARNING;
   return ALERT_NONE;
+}
+
+AlertSeverity waterSeverityForLevel(float value) {
+  if (waterAlertState == ALERT_CRITICAL) {
+    if (value < WATER_LEVEL_WARNING_PERCENT - WATER_ALERT_RELEASE_MARGIN_PERCENT) {
+      waterAlertState = ALERT_NONE;
+    } else if (value < WATER_LEVEL_CRITICAL_PERCENT - WATER_ALERT_RELEASE_MARGIN_PERCENT) {
+      waterAlertState = ALERT_WARNING;
+    }
+    return waterAlertState;
+  }
+
+  if (waterAlertState == ALERT_WARNING) {
+    if (value >= WATER_LEVEL_CRITICAL_PERCENT) {
+      waterAlertState = ALERT_CRITICAL;
+    } else if (value < WATER_LEVEL_WARNING_PERCENT - WATER_ALERT_RELEASE_MARGIN_PERCENT) {
+      waterAlertState = ALERT_NONE;
+    }
+    return waterAlertState;
+  }
+
+  waterAlertState = severityForValue(value, WATER_LEVEL_WARNING_PERCENT, WATER_LEVEL_CRITICAL_PERCENT);
+  return waterAlertState;
 }
 
 void printVibrationCommandHelp() {
@@ -439,6 +489,8 @@ void handleSerialCommands() {
     Serial.print(lastVibrationRmsAdc, 2);
     Serial.print(", adc_per_unit=");
     Serial.print(VIBRATION_RMS_ADC_PER_UNIT, 2);
+    Serial.print(", deadband_adc=");
+    Serial.print(VIBRATION_NOISE_DEADBAND_ADC, 2);
     Serial.print(", max=");
     Serial.println(VIBRATION_LEVEL_MAX, 2);
     return;
@@ -492,6 +544,8 @@ void handleSerialCommands() {
     }
     dryValue = waterCalDryCaptured;
     wetValue = waterCalWetCaptured;
+    filteredWaterAdc = NAN;
+    waterAlertState = ALERT_NONE;
     Serial.print("WL applied: dryValue=");
     Serial.print(dryValue);
     Serial.print(", wetValue=");
@@ -589,9 +643,9 @@ float readVibrationLevel() {
   lastVibrationRmsAdc = stats.rmsAdc;
 
   const float dynamicRmsAdc = stats.rmsAdc - vibrationBaselineRmsAdc;
-  if (dynamicRmsAdc <= 0.0f) return 0.0f;
+  if (dynamicRmsAdc <= VIBRATION_NOISE_DEADBAND_ADC) return 0.0f;
 
-  const float level = dynamicRmsAdc / VIBRATION_RMS_ADC_PER_UNIT;
+  const float level = (dynamicRmsAdc - VIBRATION_NOISE_DEADBAND_ADC) / VIBRATION_RMS_ADC_PER_UNIT;
   return clampVibrationLevel(level);
 }
 
@@ -655,16 +709,12 @@ void setup() {
   Serial.println("Buzzer tones: WARNING slow pulse, CRITICAL rapid triple pulse.");
   Serial.print("FW WIFI_SSID=");
   Serial.println(WIFI_SSID);
-  Serial.println("Format: T=xx.x,H=yy.y,ADC=zzzz,WL=pp.pp,VIB=n.nn,VIB_RMS_ADC=n.nn,VIB_ADC_PP=n,VIB_BASE_ADC=n.nn,VIB_SOURCE=text,SEVERITY=text,ALARM=ON/OFF,BUZZER=ON/OFF,ADC_FAULT=n,STATUS=text");
+  Serial.println("Format: T=xx.x,H=yy.y,ADC_RAW=zzzz,ADC=zzzz,WL=pp.pp,VIB=n.nn,VIB_RMS_ADC=n.nn,VIB_ADC_PP=n,VIB_BASE_ADC=n.nn,VIB_SOURCE=text,SEVERITY=text,ALARM=ON/OFF,BUZZER=ON/OFF,ADC_FAULT=n,WATER_SHORT=n,STATUS=text");
   Serial.println("VIB is a calibrated vibration RMS index from the AO signal on GPIO1.");
   Serial.print("VIB adc_per_unit=");
   Serial.print(VIBRATION_RMS_ADC_PER_UNIT, 2);
   Serial.print(", VIB max=");
   Serial.println(VIBRATION_LEVEL_MAX, 2);
-  Serial.println("Keep the vibration sensor still for baseline calibration...");
-  calibrateVibrationBaseline(VIBRATION_BASELINE_WINDOWS);
-  Serial.print("VIB baseline RMS_ADC=");
-  Serial.println(vibrationBaselineRmsAdc, 2);
   Serial.println("Vibration commands: VIB HELP / VIB ZERO / VIB STATUS");
   Serial.println("Water calibration: WL HELP / WL DRY / WL WET / WL CAL / WL APPLY");
   Serial.println("Tip: if DHT stays nan, try DHT data pin on GPIO6/7 and keep common GND.");
@@ -687,12 +737,26 @@ void setup() {
     }
   }
 #endif
+
+  Serial.println("Keep the vibration sensor still for baseline calibration...");
+  calibrateVibrationBaseline(VIBRATION_BASELINE_WINDOWS);
+  Serial.print("VIB baseline RMS_ADC=");
+  Serial.println(vibrationBaselineRmsAdc, 2);
+  Serial.println("Keep still again: VIB auto-zero will refine baseline after startup.");
 }
 
 void loop() {
   handleSerialCommands();
 
   unsigned long now = millis();
+  if (!vibrationStartupRezeroDone && now >= VIBRATION_STARTUP_REZERO_MS) {
+    vibrationStartupRezeroDone = true;
+    Serial.println("VIB startup auto-zero: keep the sensor still...");
+    calibrateVibrationBaseline(VIBRATION_BASELINE_WINDOWS);
+    Serial.print("VIB startup baseline RMS_ADC=");
+    Serial.println(vibrationBaselineRmsAdc, 2);
+  }
+
   if (now - lastWaterReadMs < WATER_READ_INTERVAL_MS) return;
   lastWaterReadMs = now;
 
@@ -713,10 +777,22 @@ void loop() {
 
   float tempC = lastTempC;
   float hum = lastHum;
-  int waterAdc = readWaterAdc();
+  int rawWaterAdc = readWaterAdc();
+  const bool waterShortSample = rawWaterAdc <= WATER_SHORT_ADC_LOW;
+  if (waterShortSample) {
+    if (waterShortFaultCount < 255) waterShortFaultCount++;
+  } else {
+    waterShortFaultCount = 0;
+  }
+  const bool waterShortFault = waterShortFaultCount >= WATER_SHORT_CONSECUTIVE;
+
+  int waterAdc = isnan(filteredWaterAdc) ? rawWaterAdc : (int)(filteredWaterAdc + 0.5f);
+  if (!waterShortFault) {
+    waterAdc = (int)(updateWaterAdcFilter(rawWaterAdc) + 0.5f);
+  }
   float waterLevelPercent = adcToWaterLevelPercent(waterAdc);
   float vibrationLevel = readVibrationLevel();
-  const bool waterAdcOutOfRange = (waterAdc < ADC_FAULT_LOW || waterAdc > ADC_FAULT_HIGH);
+  const bool waterAdcOutOfRange = !waterShortFault && (waterAdc < ADC_FAULT_LOW || waterAdc > ADC_FAULT_HIGH);
   if (waterAdcOutOfRange) {
     if (waterAdcFaultCount < 255) waterAdcFaultCount++;
   } else {
@@ -727,9 +803,10 @@ void loop() {
   const AlertSeverity tempSeverity = isnan(tempC)
       ? ALERT_NONE
       : severityForValue(tempC, TEMP_WARNING_C, TEMP_CRITICAL_C);
-  const AlertSeverity waterSeverity = waterAdcFault
-      ? ALERT_NONE
-      : severityForValue(waterLevelPercent, WATER_LEVEL_WARNING_PERCENT, WATER_LEVEL_CRITICAL_PERCENT);
+  if (waterAdcFault) waterAlertState = ALERT_NONE;
+  const AlertSeverity waterSeverity = waterShortFault
+      ? ALERT_CRITICAL
+      : (waterAdcFault ? ALERT_NONE : waterSeverityForLevel(waterLevelPercent));
   const AlertSeverity vibrationSeverity =
       severityForValue(vibrationLevel, VIBRATION_WARNING_LEVEL, VIBRATION_CRITICAL_LEVEL);
   const AlertSeverity alertSeverity =
@@ -751,6 +828,8 @@ void loop() {
   if (isnan(tempC)) Serial.print("nan"); else Serial.print(tempC, 1);
   Serial.print(",H=");
   if (isnan(hum)) Serial.print("nan"); else Serial.print(hum, 1);
+  Serial.print(",ADC_RAW=");
+  Serial.print(rawWaterAdc);
   Serial.print(",ADC=");
   Serial.print(waterAdc);
   Serial.print(",WL=");
@@ -772,12 +851,16 @@ void loop() {
   Serial.print(buzzerOutputOn ? "ON" : "OFF");
   Serial.print(",ADC_FAULT=");
   Serial.print(waterAdcFaultCount);
+  Serial.print(",WATER_SHORT=");
+  Serial.print(waterShortFaultCount);
   Serial.print(",CLOUD_SILENCE=");
   Serial.print(cloudBuzzerSilenced ? "ON" : "OFF");
   Serial.print(",");
 
   if (isnan(tempC) || isnan(hum)) {
     Serial.println("DHT_ERR");
+  } else if (waterShortFault) {
+    Serial.println("WATER_SHORT_OR_SUBMERGED");
   } else if (waterAdcFault) {
     Serial.println("WATER_WIRING_OR_PIN_ERR");
   } else {
@@ -790,7 +873,7 @@ void loop() {
       mqttClient.loop();
     }
 
-    if (!waterAdcFault && (now - lastWaterPostMs >= WATER_POST_INTERVAL_MS)) {
+    if (!waterAdcFault && !waterShortFault && (now - lastWaterPostMs >= WATER_POST_INTERVAL_MS)) {
       if (sendReadingToCloud("waterLevel", waterLevelPercent)) {
         lastWaterPostMs = now;
       }

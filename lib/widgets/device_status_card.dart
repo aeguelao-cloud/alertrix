@@ -36,9 +36,17 @@ class DeviceStatusCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final color = uiToneColor(statusTone);
+    final compact = uiIsCompactLayout(context);
+    final statusBadge = StatusBadge(
+      label: statusLabel,
+      tone: statusTone,
+      icon: statusTone == UiBadgeTone.offline
+          ? Icons.wifi_off_rounded
+          : Icons.wifi_rounded,
+    );
     return Container(
       margin: const EdgeInsets.only(bottom: 10),
-      padding: const EdgeInsets.all(14),
+      padding: EdgeInsets.all(compact ? 11 : 14),
       decoration: BoxDecoration(
         color: UiColors.surface,
         borderRadius: BorderRadius.circular(UiRadius.card),
@@ -53,38 +61,48 @@ class DeviceStatusCard extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Container(
-                width: 38,
-                height: 38,
+                width: compact ? 34 : 38,
+                height: compact ? 34 : 38,
                 decoration: BoxDecoration(
                   color: uiToneSoftColor(statusTone),
                   borderRadius: BorderRadius.circular(UiRadius.input),
                 ),
-                child: Icon(icon, size: 19, color: color),
+                child: Icon(icon, size: compact ? 17 : 19, color: color),
               ),
-              const SizedBox(width: 10),
+              SizedBox(width: compact ? 8 : 10),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(deviceName, style: UiText.cardTitle),
+                    Text(
+                      deviceName,
+                      style: compact
+                          ? UiText.cardTitle.copyWith(fontSize: 13.5)
+                          : UiText.cardTitle,
+                    ),
                     const SizedBox(height: 3),
-                    Text('$deviceId | $zone', style: UiText.helper),
+                    Text(
+                      '$deviceId | $zone',
+                      style: UiText.helper,
+                      softWrap: true,
+                    ),
+                    if (compact) ...[
+                      const SizedBox(height: 8),
+                      statusBadge,
+                    ],
                   ],
                 ),
               ),
-              StatusBadge(
-                label: statusLabel,
-                tone: statusTone,
-                icon: statusTone == UiBadgeTone.offline
-                    ? Icons.wifi_off_rounded
-                    : Icons.wifi_rounded,
-              ),
+              if (!compact) ...[
+                const SizedBox(width: 10),
+                statusBadge,
+              ],
             ],
           ),
           const SizedBox(height: 12),
           Wrap(
-            spacing: 12,
-            runSpacing: 8,
+            spacing: compact ? 10 : 12,
+            runSpacing: compact ? 6 : 8,
             children: [
               _DeviceFact(label: 'Latest telemetry', value: latestTelemetry),
               if (readingSummary != null)
@@ -129,8 +147,9 @@ class _DeviceFact extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final compact = uiIsCompactLayout(context);
     return ConstrainedBox(
-      constraints: const BoxConstraints(minWidth: 130),
+      constraints: BoxConstraints(minWidth: compact ? 112 : 130),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [

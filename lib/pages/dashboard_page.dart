@@ -1,7 +1,10 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../config/metrics_config.dart';
 import '../models/monitoring_models.dart';
+import '../services/trend_history_api.dart';
 import '../theme/severity_colors.dart';
 import '../utils/relative_time.dart';
 import '../widgets/alert_card.dart';
@@ -25,6 +28,7 @@ class DashboardPage extends StatefulWidget {
     required this.onNavigateToDevices,
     required this.onRetrySync,
     required this.syncBusy,
+    this.apiBaseUrl,
   });
 
   final MonitoringSnapshot snapshot;
@@ -35,6 +39,7 @@ class DashboardPage extends StatefulWidget {
   final VoidCallback onNavigateToDevices;
   final VoidCallback onRetrySync;
   final bool syncBusy;
+  final String? apiBaseUrl;
 
   @override
   State<DashboardPage> createState() => _DashboardPageState();
@@ -42,8 +47,40 @@ class DashboardPage extends StatefulWidget {
 
 class _DashboardPageState extends State<DashboardPage> {
   final GlobalKey _deviceSectionKey = GlobalKey();
+  final Map<String, SensorTrendSeries> _remoteTrendCache =
+      <String, SensorTrendSeries>{};
   SensorType _selectedMetric = SensorType.waterLevel;
   String _selectedRange = '1H';
+  bool _loadingRemoteTrend = false;
+  String? _remoteTrendError;
+  int _trendRequestId = 0;
+  DateTime? _lastTrendFetchAt;
+  static const Duration _minRemoteTrendFetchGap = Duration(seconds: 2);
+
+  bool get _useRemoteTrend => (widget.apiBaseUrl ?? '').trim().isNotEmpty;
+
+  @override
+  void initState() {
+    super.initState();
+    if (_useRemoteTrend) {
+      unawaited(_fetchSelectedTrend(force: true));
+    }
+  }
+
+  @override
+  void didUpdateWidget(covariant DashboardPage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    final apiChanged = oldWidget.apiBaseUrl != widget.apiBaseUrl;
+    final snapshotUpdated =
+        oldWidget.snapshot.updatedAt != widget.snapshot.updatedAt;
+    if (apiChanged) {
+      _remoteTrendCache.clear();
+      _remoteTrendError = null;
+    }
+    if (_useRemoteTrend && (apiChanged || snapshotUpdated)) {
+      unawaited(_fetchSelectedTrend(force: apiChanged));
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -98,8 +135,18 @@ class _DashboardPageState extends State<DashboardPage> {
     final systemStatusLabel = _systemStatusLabel(overview, riskLabel);
     final systemStatusTone = _systemTone(overview, riskTone);
     final systemStatusIcon = _systemIcon(overview, incident);
-    final series =
+    final fallbackSeries =
         _seriesFor(_selectedMetric, snapshot.history, _selectedRange);
+    final remoteSeries = _remoteTrendCache[
+        _trendCacheKey(metric: _selectedMetric, range: _selectedRange)];
+    final usingRemoteSeries = remoteSeries != null;
+    final series = usingRemoteSeries ? remoteSeries.values : fallbackSeries;
+    final trendTimestamps = remoteSeries?.hasTimedValues == true
+        ? remoteSeries!.timestamps
+        : const <DateTime>[];
+    final trendSource = usingRemoteSeries
+        ? 'Cloud history API'
+        : (_useRemoteTrend ? 'Local snapshot fallback' : 'Local snapshot');
 
     final incidentCard = _IncidentCard(
       incident: incident,
@@ -143,12 +190,16 @@ class _DashboardPageState extends State<DashboardPage> {
       selectedMetric: _selectedMetric,
       selectedRange: _selectedRange,
       values: series,
+      timestamps: trendTimestamps,
       syncedAt: snapshot.updatedAt,
       syncBusy: widget.syncBusy,
+      loadingRemoteTrend: _loadingRemoteTrend,
+      remoteTrendError: _remoteTrendError,
+      trendSource: trendSource,
       onRetrySync: widget.onRetrySync,
       onViewDeviceStatus: _scrollToDeviceSection,
-      onMetricChanged: (value) => setState(() => _selectedMetric = value),
-      onRangeChanged: (value) => setState(() => _selectedRange = value),
+      onMetricChanged: _handleMetricChanged,
+      onRangeChanged: _handleRangeChanged,
     );
     final sensorSummary = _SensorSummaryGrid(
       readings: readings,
@@ -298,6 +349,72 @@ class _DashboardPageState extends State<DashboardPage> {
       curve: Curves.easeOut,
       alignment: 0.06,
     );
+  }
+
+  void _handleMetricChanged(SensorType value) {
+    setState(() => _selectedMetric = value);
+    if (_useRemoteTrend) {
+      unawaited(_fetchSelectedTrend(force: true));
+    }
+  }
+
+  void _handleRangeChanged(String value) {
+    setState(() => _selectedRange = value);
+    if (_useRemoteTrend) {
+      unawaited(_fetchSelectedTrend(force: true));
+    }
+  }
+
+  Future<void> _fetchSelectedTrend({bool force = false}) async {
+    final baseUrl = (widget.apiBaseUrl ?? '').trim();
+    if (baseUrl.isEmpty) return;
+    if (!force && _loadingRemoteTrend) return;
+
+    final now = DateTime.now();
+    final lastFetch = _lastTrendFetchAt;
+    if (!force &&
+        lastFetch != null &&
+        now.difference(lastFetch) < _minRemoteTrendFetchGap) {
+      return;
+    }
+    _lastTrendFetchAt = now;
+
+    final metric = _selectedMetric;
+    final range = _selectedRange;
+    final requestId = ++_trendRequestId;
+    setState(() {
+      _loadingRemoteTrend = true;
+      _remoteTrendError = null;
+    });
+
+    try {
+      final series = await TrendHistoryApi(baseUrl: baseUrl).fetchTrend(
+        metric: metric,
+        range: range,
+      );
+      if (!mounted || requestId != _trendRequestId) return;
+      setState(() {
+        _remoteTrendCache[_trendCacheKey(metric: metric, range: range)] =
+            series;
+        _loadingRemoteTrend = false;
+        _remoteTrendError = null;
+      });
+    } catch (_) {
+      if (!mounted || requestId != _trendRequestId) return;
+      setState(() {
+        _remoteTrendCache.remove(_trendCacheKey(metric: metric, range: range));
+        _loadingRemoteTrend = false;
+        _remoteTrendError =
+            'Cloud trend history unavailable; showing latest snapshot cache.';
+      });
+    }
+  }
+
+  static String _trendCacheKey({
+    required SensorType metric,
+    required String range,
+  }) {
+    return '${metric.name}|$range';
   }
 
   static AlertEvent? _topIncident(List<AlertEvent> alerts) {
@@ -924,6 +1041,76 @@ class _EmergencyBanner extends StatelessWidget {
         (incident == null
             ? 'No high-priority incident in the queue.'
             : '${_formatAlertTitle(incident!.title)} in ${incident!.zone} - ${formatIncidentRelativeTime(incident!.timestamp)}');
+    final icon = noTelemetry
+        ? Icons.cloud_off_rounded
+        : (critical
+            ? Icons.crisis_alert_rounded
+            : (warningOnly
+                ? Icons.warning_amber_rounded
+                : Icons.check_circle_rounded));
+    final iconColor = switch (tone) {
+      UiBadgeTone.critical => UiColors.danger,
+      UiBadgeTone.warning => UiColors.warning,
+      UiBadgeTone.noTelemetry => UiColors.neutral,
+      _ => UiColors.healthy,
+    };
+
+    Widget messageBlock() {
+      return Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Padding(
+            padding: const EdgeInsets.only(top: 2),
+            child: Icon(icon, color: iconColor),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(title, style: UiText.cardTitle),
+                const SizedBox(height: 2),
+                Text(detail, style: UiText.helper),
+              ],
+            ),
+          ),
+        ],
+      );
+    }
+
+    Widget actionButtons() {
+      return Wrap(
+        spacing: 8,
+        runSpacing: 8,
+        children: [
+          if (noTelemetry) ...[
+            OutlinedButton(
+              onPressed: onOpenDeviceManagement,
+              style: uiSecondaryButton(),
+              child: const Text('Open Device Management'),
+            ),
+            FilledButton(
+              onPressed: onRetrySync,
+              style: uiPrimaryButton(),
+              child: const Text('Retry Sync'),
+            ),
+          ] else ...[
+            OutlinedButton(
+              onPressed: onOpenQueue,
+              style: uiSecondaryButton(),
+              child: Text('Open $alertsLabel'),
+            ),
+            FilledButton(
+              onPressed: onOpenIncident,
+              style: uiPrimaryButton(),
+              child: Text(
+                incident == null ? 'Review Status' : 'Open Incident',
+              ),
+            ),
+          ],
+        ],
+      );
+    }
 
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
@@ -932,75 +1119,28 @@ class _EmergencyBanner extends StatelessWidget {
         borderRadius: BorderRadius.circular(UiRadius.card),
         border: Border.all(color: borderColor),
       ),
-      child: Wrap(
-        runSpacing: 10,
-        alignment: WrapAlignment.spaceBetween,
-        crossAxisAlignment: WrapCrossAlignment.center,
-        children: [
-          Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(
-                noTelemetry
-                    ? Icons.cloud_off_rounded
-                    : (critical
-                        ? Icons.crisis_alert_rounded
-                        : (warningOnly
-                            ? Icons.warning_amber_rounded
-                            : Icons.check_circle_rounded)),
-                color: switch (tone) {
-                  UiBadgeTone.critical => UiColors.danger,
-                  UiBadgeTone.warning => UiColors.warning,
-                  UiBadgeTone.noTelemetry => UiColors.neutral,
-                  _ => UiColors.healthy,
-                },
-              ),
-              const SizedBox(width: 10),
-              ConstrainedBox(
-                constraints: const BoxConstraints(maxWidth: 560),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(title, style: UiText.cardTitle),
-                    const SizedBox(height: 2),
-                    Text(detail, style: UiText.helper),
-                  ],
-                ),
-              ),
-            ],
-          ),
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: [
-              if (noTelemetry) ...[
-                OutlinedButton(
-                  onPressed: onOpenDeviceManagement,
-                  style: uiSecondaryButton(),
-                  child: const Text('Open Device Management'),
-                ),
-                FilledButton(
-                  onPressed: onRetrySync,
-                  style: uiPrimaryButton(),
-                  child: const Text('Retry Sync'),
-                ),
-              ] else ...[
-                OutlinedButton(
-                  onPressed: onOpenQueue,
-                  style: uiSecondaryButton(),
-                  child: Text('Open $alertsLabel'),
-                ),
-                FilledButton(
-                  onPressed: onOpenIncident,
-                  style: uiPrimaryButton(),
-                  child: Text(
-                    incident == null ? 'Review Status' : 'Open Incident',
-                  ),
-                ),
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          if (constraints.maxWidth < 520) {
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                messageBlock(),
+                const SizedBox(height: 10),
+                actionButtons(),
               ],
+            );
+          }
+
+          return Row(
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              Expanded(child: messageBlock()),
+              const SizedBox(width: 10),
+              actionButtons(),
             ],
-          ),
-        ],
+          );
+        },
       ),
     );
   }
@@ -1384,8 +1524,12 @@ class _TrendsCard extends StatelessWidget {
     required this.selectedMetric,
     required this.selectedRange,
     required this.values,
+    required this.timestamps,
     required this.syncedAt,
     required this.syncBusy,
+    required this.loadingRemoteTrend,
+    required this.remoteTrendError,
+    required this.trendSource,
     required this.onMetricChanged,
     required this.onRangeChanged,
     required this.onRetrySync,
@@ -1395,8 +1539,12 @@ class _TrendsCard extends StatelessWidget {
   final SensorType selectedMetric;
   final String selectedRange;
   final List<double> values;
+  final List<DateTime> timestamps;
   final DateTime syncedAt;
   final bool syncBusy;
+  final bool loadingRemoteTrend;
+  final String? remoteTrendError;
+  final String trendSource;
   final ValueChanged<SensorType> onMetricChanged;
   final ValueChanged<String> onRangeChanged;
   final VoidCallback onRetrySync;
@@ -1406,17 +1554,19 @@ class _TrendsCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final compact = uiIsCompactLayout(context);
     final hasData = values.isNotEmpty;
-    final timestamps = buildSeriesTimestamps(
-      count: values.length,
-      range: selectedRange,
-      end: syncedAt,
-    );
+    final chartTimestamps = timestamps.length == values.length
+        ? timestamps
+        : buildSeriesTimestamps(
+            count: values.length,
+            range: selectedRange,
+            end: syncedAt,
+          );
     final xTicks = buildXAxisTicks(
       range: selectedRange,
-      end: timestamps.isNotEmpty ? timestamps.last : syncedAt,
+      end: chartTimestamps.isNotEmpty ? chartTimestamps.last : syncedAt,
     );
     final latestValue = hasData ? values.last : null;
-    final latestTime = timestamps.isNotEmpty ? timestamps.last : null;
+    final latestTime = chartTimestamps.isNotEmpty ? chartTimestamps.last : null;
     return UiCard(
       big: true,
       child: Column(
@@ -1476,6 +1626,19 @@ class _TrendsCard extends StatelessWidget {
                 .toList(growable: false),
           ),
           const SizedBox(height: 12),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: [
+              Text('Source: $trendSource', style: UiText.helper),
+              if (loadingRemoteTrend)
+                const Text('Syncing cloud trend...', style: UiText.helper),
+              if (remoteTrendError != null)
+                Text(remoteTrendError!, style: UiText.helper),
+            ],
+          ),
+          const SizedBox(height: 8),
           SizedBox(
             height: hasData ? 222 : (compact ? 350 : 336),
             child: hasData
@@ -1489,14 +1652,14 @@ class _TrendsCard extends StatelessWidget {
                           style: UiText.helper),
                       const SizedBox(height: 2),
                       Text(
-                        'Time window: ${rangeWindowLabel(selectedRange)} | Sampling interval: ${inferSamplingIntervalLabel(timestamps)}',
+                        'Time window: ${rangeWindowLabel(selectedRange)} | Sampling interval: ${inferSamplingIntervalLabel(chartTimestamps)}',
                         style: UiText.helper,
                       ),
                       const SizedBox(height: 10),
                       Expanded(
                         child: TrendSparkline(
                           values: values,
-                          timestamps: timestamps,
+                          timestamps: chartTimestamps,
                           xTicks: xTicks,
                           color: sensorColorOf(selectedMetric),
                           warningThreshold: _warning(selectedMetric),

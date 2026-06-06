@@ -23,7 +23,7 @@ Parameters:
     Description: Verified SES sender email used for registration verification codes.
   EmailCooldownSeconds:
     Type: Number
-    Default: 86400
+    Default: 60
     Description: Cooldown window in seconds for repeated alert emails of same zone+severity.
   AlertCooldownSeconds:
     Type: Number

@@ -36,6 +36,7 @@ Thumbs.db
 # Local secrets
 backend/env.local.json
 arduino/DHT11WaterLevelPractice/mqtt_secrets.h
+arduino/DHT11WaterLevelPractice/certs/
 alertrix-*-firebase-adminsdk-*.json
 
 # Local thesis/presentation deliverables
@@ -53,6 +54,11 @@ docs/screenshot_*.md
 docs/figures/figure_14_system_architecture_detailed.png
 Alertrix_CAT403_Final_Presentation_Content_15slides.md
 Alertrix_Code_Defense_Cheat_Sheet.md
+_doc_extract*/
+*_extract.txt
+canva_review/
+video_frames_*/
+video_input_*.mp4
 
 # Local temp/build folders
 backend/.sam_build_new/

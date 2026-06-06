@@ -1,10 +1,8 @@
-import 'dart:convert';
-
 import 'package:flutter/material.dart';
-import 'package:http/http.dart' as http;
 
 import '../config/metrics_config.dart';
 import '../models/monitoring_models.dart';
+import '../services/trend_history_api.dart';
 import '../widgets/trend_sparkline.dart';
 import '../widgets/ui_kit.dart';
 
@@ -527,21 +525,13 @@ class _TrendsPageState extends State<TrendsPage> {
     });
 
     try {
+      final api = TrendHistoryApi(baseUrl: baseUrl);
       final responses = await Future.wait(
         activeSensorTypes.map((metric) async {
-          final uri = Uri.parse('$baseUrl/api/trends').replace(
-            queryParameters: {
-              'metric': metricToApi(metric),
-              'range': rangeToApi(_selectedRange),
-              '_': DateTime.now().millisecondsSinceEpoch.toString(),
-            },
+          final parsed = await api.fetchTrend(
+            metric: metric,
+            range: _selectedRange,
           );
-          final resp = await http.get(uri);
-          if (resp.statusCode < 200 || resp.statusCode >= 300) {
-            throw Exception('Trends API ${resp.statusCode}');
-          }
-          final data = jsonDecode(resp.body) as Map<String, dynamic>;
-          final parsed = _parseTrendPayload(data);
           return MapEntry(metric, parsed);
         }),
       );
@@ -565,59 +555,6 @@ class _TrendsPageState extends State<TrendsPage> {
         _remoteError = 'Remote trends unavailable.';
       });
     }
-  }
-
-  _TrendPayload _parseTrendPayload(Map<String, dynamic> data) {
-    final rawSeries = data['series'];
-    final values = <double>[];
-    final timestamps = <DateTime>[];
-
-    if (rawSeries is List) {
-      if (rawSeries.isNotEmpty && rawSeries.first is Map) {
-        for (final item in rawSeries.whereType<Map>()) {
-          final rawValue = item['value'];
-          if (rawValue is num) {
-            values.add(rawValue.toDouble());
-            final parsed = _parseTime(
-              item['timestamp']?.toString() ??
-                  item['time']?.toString() ??
-                  item['ts']?.toString(),
-            );
-            if (parsed != null) {
-              timestamps.add(parsed);
-            }
-          }
-        }
-      } else {
-        values.addAll(
-          rawSeries.whereType<num>().map((e) => e.toDouble()),
-        );
-      }
-    }
-
-    final rawTimestamps = data['timestamps'];
-    if (rawTimestamps is List && rawTimestamps.length == values.length) {
-      timestamps
-        ..clear()
-        ..addAll(
-          rawTimestamps
-              .map((e) => _parseTime(e?.toString()))
-              .whereType<DateTime>(),
-        );
-      if (timestamps.length != values.length) {
-        timestamps.clear();
-      }
-    } else if (timestamps.length != values.length) {
-      timestamps.clear();
-    }
-
-    return _TrendPayload(values: values, timestamps: timestamps);
-  }
-
-  DateTime? _parseTime(String? raw) {
-    if (raw == null || raw.trim().isEmpty) return null;
-    final parsed = DateTime.tryParse(raw.trim());
-    return parsed?.toLocal();
   }
 
   static SensorLevel _levelFor(SensorType type, double value) {
@@ -710,16 +647,6 @@ class _TrendsPageState extends State<TrendsPage> {
     final mm = dt.minute.toString().padLeft(2, '0');
     return '$hh:$mm';
   }
-}
-
-class _TrendPayload {
-  const _TrendPayload({
-    required this.values,
-    required this.timestamps,
-  });
-
-  final List<double> values;
-  final List<DateTime> timestamps;
 }
 
 class _TrendOpsBanner extends StatelessWidget {
