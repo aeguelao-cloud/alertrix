@@ -7,6 +7,7 @@ import 'package:http/http.dart' as http;
 import '../models/auth_models.dart';
 import '../models/monitoring_models.dart';
 import '../theme/severity_colors.dart';
+import '../utils/ui_formatters.dart' show normalizeSensorDisplayValue;
 import '../utils/relative_time.dart';
 import '../widgets/alert_card.dart';
 import '../widgets/dashboard_layout.dart';
@@ -173,7 +174,9 @@ class _AlertsPageState extends State<AlertsPage> {
                         alertType: _titleCaseAlert(alert.title),
                         deviceId: _sensorIdForAlert(alert),
                         zone: alert.zone,
-                        measuredValue: alert.triggerValue ?? 'Not reported',
+                        measuredValue: alert.triggerValue == null
+                            ? 'Not reported'
+                            : normalizeSensorDisplayValue(alert.triggerValue!),
                         threshold:
                             _thresholdByAlertTitle(alert.title, alert.severity),
                         timestamp: formatIncidentRelativeTime(alert.timestamp),
@@ -1224,7 +1227,7 @@ class _AlertsPageState extends State<AlertsPage> {
     if (trigger == null || trigger.isEmpty) {
       return 'Not reported';
     }
-    return trigger;
+    return normalizeSensorDisplayValue(trigger);
   }
 
   static String _thresholdByAlertTitle(String title, SensorLevel severity) {
@@ -1235,7 +1238,7 @@ class _AlertsPageState extends State<AlertsPage> {
       return '$label ${isCritical ? '85%' : '70%'}';
     }
     if (lower.contains('vibration')) {
-      return '$label ${isCritical ? '4.0' : '2.8'} mm/s';
+      return '$label ${isCritical ? '14.0' : '10.0'} index';
     }
     if (lower.contains('temp')) {
       return '$label ${isCritical ? '40' : '35'}deg C';
@@ -1563,8 +1566,10 @@ class _HistoryAlert {
       timestamp: detectedAt,
       severity: severity,
       status: status,
-      triggerValue: json['latestMeasuredValue']?.toString() ??
-          json['triggerValue']?.toString(),
+      triggerValue: _normalizeNullableSensorValue(
+        json['latestMeasuredValue']?.toString() ??
+            json['triggerValue']?.toString(),
+      ),
       incidentId: json['incidentId']?.toString(),
       deviceId: json['deviceId']?.toString(),
       sensorType: json['sensorType']?.toString(),
@@ -1585,6 +1590,11 @@ class _HistoryAlert {
       zone: source.zone,
       timestamp: source.timestamp,
     );
+  }
+
+  static String? _normalizeNullableSensorValue(String? raw) {
+    if (raw == null) return null;
+    return normalizeSensorDisplayValue(raw);
   }
 }
 

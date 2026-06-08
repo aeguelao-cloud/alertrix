@@ -63,6 +63,7 @@ video_input_*.mp4
 # Local temp/build folders
 backend/.sam_build_new/
 tmp/
+*_tmp/
 tmp_logs/
 outputs/
 test-results/

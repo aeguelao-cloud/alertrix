@@ -4,6 +4,11 @@ const { ALERT_STATUS, normalizeAlertRecord } = require("./alertStatus");
 
 const SENSOR_TYPES = ["waterLevel", "vibration", "temperature"];
 const DEFAULT_LIVE_WINDOW_SECONDS = Number(process.env.DASHBOARD_LIVE_WINDOW_SECONDS || 60);
+const SENSOR_THRESHOLDS = {
+  waterLevel: { warning: 70, critical: 85 },
+  vibration: { warning: 10, critical: 14 },
+  temperature: { warning: 35, critical: 40 },
+};
 
 function buildDashboardOverview({
   latestReadings = [],
@@ -36,6 +41,8 @@ function buildDashboardOverview({
   const liveCutoffMs = nowMs - Math.max(0, liveWindowSeconds) * 1000;
   let latestReadingMs = 0;
   let liveSensors = 0;
+  let liveCriticalQueue = 0;
+  let liveWarningQueue = 0;
 
   const sensorStatus = {};
   for (const sensorType of SENSOR_TYPES) {
@@ -43,13 +50,19 @@ function buildDashboardOverview({
     const readingMs = parseTimeMs(item?.capturedAt);
     const hasReading = Number.isFinite(readingMs) && readingMs > 0;
     const isLive = hasReading && readingMs >= liveCutoffMs;
+    const severity = isLive
+      ? severityForSensorValue(sensorType, item?.value)
+      : "UNKNOWN";
     if (isLive) liveSensors += 1;
+    if (severity === "CRITICAL") liveCriticalQueue += 1;
+    if (severity === "WARNING") liveWarningQueue += 1;
     if (hasReading && readingMs > latestReadingMs) latestReadingMs = readingMs;
 
     sensorStatus[sensorType] = {
       lastSeenAt: hasReading ? new Date(readingMs).toISOString() : null,
       live: isLive,
       value: item?.value ?? null,
+      severity,
     };
   }
 
@@ -59,13 +72,13 @@ function buildDashboardOverview({
     : null;
   const noTelemetry = !latestReadingAt || latestReadingMs < liveCutoffMs;
 
-  let activeIncidents = 0;
-  let criticalQueue = 0;
-  let warningQueue = 0;
+  let historicalActiveIncidents = 0;
+  let historicalCriticalQueue = 0;
+  let historicalWarningQueue = 0;
   if (incidentQueueStats) {
-    activeIncidents = toInt(incidentQueueStats.activeIncidents, 0);
-    criticalQueue = toInt(incidentQueueStats.criticalQueue, 0);
-    warningQueue = toInt(incidentQueueStats.warningQueue, 0);
+    historicalActiveIncidents = toInt(incidentQueueStats.activeIncidents, 0);
+    historicalCriticalQueue = toInt(incidentQueueStats.criticalQueue, 0);
+    historicalWarningQueue = toInt(incidentQueueStats.warningQueue, 0);
   } else {
     const normalizedAlerts = alerts.map((item) => normalizeAlertRecord(item));
     const activeAlerts = normalizedAlerts.filter(
@@ -73,10 +86,14 @@ function buildDashboardOverview({
         item.status === ALERT_STATUS.ACTIVE ||
         item.status === ALERT_STATUS.ACKNOWLEDGED
     );
-    activeIncidents = activeAlerts.length;
-    criticalQueue = activeAlerts.filter((item) => item.severity === "CRITICAL").length;
-    warningQueue = activeAlerts.filter((item) => item.severity === "WARNING").length;
+    historicalActiveIncidents = activeAlerts.length;
+    historicalCriticalQueue = activeAlerts.filter((item) => item.severity === "CRITICAL").length;
+    historicalWarningQueue = activeAlerts.filter((item) => item.severity === "WARNING").length;
   }
+
+  const criticalQueue = noTelemetry ? 0 : liveCriticalQueue;
+  const warningQueue = noTelemetry ? 0 : liveWarningQueue;
+  const activeIncidents = criticalQueue + warningQueue;
 
   const telemetryCoverage = Math.round((liveSensors / SENSOR_TYPES.length) * 100);
   const latestSyncDate = latestReadingAt || now;
@@ -87,10 +104,10 @@ function buildDashboardOverview({
   if (noTelemetry) {
     systemStatus = "NO_TELEMETRY";
     currentRisk = "UNKNOWN";
-  } else if (criticalQueue > 0) {
+  } else if (liveCriticalQueue > 0) {
     systemStatus = "CRITICAL";
     currentRisk = "CRITICAL";
-  } else if (warningQueue > 0) {
+  } else if (liveWarningQueue > 0) {
     systemStatus = "WARNING";
     currentRisk = "WARNING";
   }
@@ -108,6 +125,9 @@ function buildDashboardOverview({
     liveWindowSeconds,
     banner: buildBanner(systemStatus),
     sensorStatus,
+    historicalActiveIncidents,
+    historicalCriticalQueue,
+    historicalWarningQueue,
   };
 }
 
@@ -123,13 +143,13 @@ function buildBanner(systemStatus) {
       return {
         type: "CRITICAL",
         title: "Critical incident response required",
-        message: "Water level or vibration threshold exceeded.",
+        message: "A live sensor reading has exceeded the critical threshold.",
       };
     case "WARNING":
       return {
         type: "WARNING",
         title: "Warning condition detected",
-        message: "One or more incidents require operator review.",
+        message: "A live sensor reading is approaching the warning threshold.",
       };
     default:
       return {
@@ -138,6 +158,16 @@ function buildBanner(systemStatus) {
         message: "All active sensors are within safe thresholds.",
       };
   }
+}
+
+function severityForSensorValue(sensorType, rawValue) {
+  const value = Number(rawValue);
+  if (!Number.isFinite(value)) return "UNKNOWN";
+  const threshold = SENSOR_THRESHOLDS[sensorType];
+  if (!threshold) return "NORMAL";
+  if (value >= threshold.critical) return "CRITICAL";
+  if (value >= threshold.warning) return "WARNING";
+  return "NORMAL";
 }
 
 function parseTimeMs(raw) {

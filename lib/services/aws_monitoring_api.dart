@@ -5,6 +5,7 @@ import 'package:http/http.dart' as http;
 import '../config/metrics_config.dart';
 import '../models/auth_models.dart';
 import '../models/monitoring_models.dart';
+import '../utils/ui_formatters.dart' show normalizeSensorDisplayValue;
 import 'monitoring_api.dart';
 
 class AwsMonitoringApi implements MonitoringApi {
@@ -397,8 +398,10 @@ class AwsMonitoringApi implements MonitoringApi {
       timestamp: detectedAt,
       severity: severity,
       status: incidentStatusFromApi(json['status']?.toString()),
-      triggerValue: json['latestMeasuredValue']?.toString() ??
-          json['triggerValue']?.toString(),
+      triggerValue: _normalizeNullableSensorValue(
+        json['latestMeasuredValue']?.toString() ??
+            json['triggerValue']?.toString(),
+      ),
       eventCount: _asInt(json['eventCount'], fallback: 1),
       createdAt: _parseApiTime(json['createdAt']?.toString()) ?? detectedAt,
       acknowledgedAt: _parseApiTime(json['acknowledgedAt']?.toString()),
@@ -424,7 +427,8 @@ class AwsMonitoringApi implements MonitoringApi {
       incidentId: json['incidentId']?.toString() ?? '',
       capturedAt: capturedAt,
       severity: severity,
-      measuredValue: json['measuredValue']?.toString(),
+      measuredValue:
+          _normalizeNullableSensorValue(json['measuredValue']?.toString()),
       value: json['value'] is num ? (json['value'] as num).toDouble() : null,
       zone: json['zone']?.toString(),
       deviceId: json['deviceId']?.toString(),
@@ -434,6 +438,11 @@ class AwsMonitoringApi implements MonitoringApi {
       unit: json['unit']?.toString(),
       ingestTransport: json['ingestTransport']?.toString(),
     );
+  }
+
+  String? _normalizeNullableSensorValue(String? raw) {
+    if (raw == null) return null;
+    return normalizeSensorDisplayValue(raw);
   }
 
   BuzzerSilenceState _buzzerStateFromApi(Map<String, dynamic> json) {
@@ -461,6 +470,7 @@ class AwsMonitoringApi implements MonitoringApi {
         live: map['live'] == true,
         lastSeenAt: _parseApiTime(map['lastSeenAt']?.toString()),
         value: value,
+        severity: _sensorLevelFromApi(map['severity']?.toString()),
       );
     }
 
@@ -487,7 +497,23 @@ class AwsMonitoringApi implements MonitoringApi {
       latestReadingAt: _parseApiTime(json['latestReadingAt']?.toString()),
       latestReadingAgeSeconds: _asNullableInt(json['latestReadingAgeSeconds']),
       liveWindowSeconds: _asNullableInt(json['liveWindowSeconds']),
+      historicalActiveIncidents: _asInt(json['historicalActiveIncidents']),
+      historicalCriticalQueue: _asInt(json['historicalCriticalQueue']),
+      historicalWarningQueue: _asInt(json['historicalWarningQueue']),
     );
+  }
+
+  SensorLevel? _sensorLevelFromApi(String? raw) {
+    switch (raw?.trim().toUpperCase()) {
+      case 'CRITICAL':
+        return SensorLevel.critical;
+      case 'WARNING':
+        return SensorLevel.warning;
+      case 'NORMAL':
+        return SensorLevel.normal;
+      default:
+        return null;
+    }
   }
 
   SensorLevel _resolveLevel(SensorType type, double value) {

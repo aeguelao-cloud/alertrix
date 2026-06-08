@@ -4,7 +4,7 @@ import '../theme/severity_colors.dart';
 
 enum SensorType {
   waterLevel('Water Level', '%', Icons.water_drop_outlined),
-  vibration('Vibration', 'mm/s RMS', Icons.vibration_outlined),
+  vibration('Vibration', 'index', Icons.vibration_outlined),
   temperature('Temperature', 'deg C', Icons.thermostat_outlined);
 
   const SensorType(this.label, this.unit, this.icon);
@@ -179,11 +179,13 @@ class SensorTelemetryState {
     required this.live,
     this.lastSeenAt,
     this.value,
+    this.severity,
   });
 
   final bool live;
   final DateTime? lastSeenAt;
   final double? value;
+  final SensorLevel? severity;
 }
 
 class SensorTrendSeries {
@@ -213,6 +215,9 @@ class DashboardOverview {
     this.latestReadingAt,
     this.latestReadingAgeSeconds,
     this.liveWindowSeconds,
+    this.historicalActiveIncidents = 0,
+    this.historicalCriticalQueue = 0,
+    this.historicalWarningQueue = 0,
   });
 
   final DashboardSystemStatus systemStatus;
@@ -227,6 +232,9 @@ class DashboardOverview {
   final DateTime? latestReadingAt;
   final int? latestReadingAgeSeconds;
   final int? liveWindowSeconds;
+  final int historicalActiveIncidents;
+  final int historicalCriticalQueue;
+  final int historicalWarningQueue;
 
   String get currentRiskLabel {
     switch (currentRisk.toUpperCase()) {

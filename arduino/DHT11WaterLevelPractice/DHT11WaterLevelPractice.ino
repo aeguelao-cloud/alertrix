@@ -11,7 +11,7 @@
 // ===== Pins (ESP32) =====
 const uint8_t DHT_PIN = 4;
 const uint8_t WATER_SENSOR_AO_PIN = 10;  // connect to AO of red water sensor
-const uint8_t VIBRATION_SENSOR_AO_PIN = 1;  // connect to AO of vibration sensor on ESP32-S3 ADC
+const uint8_t VIBRATION_SENSOR_DO_PIN = 13;  // connect to DO/GPIO output of LM393 vibration module
 const uint8_t BUZZER_PIN = 14;
 
 #define DHTTYPE DHT11
@@ -48,7 +48,7 @@ const char* WIFI_SSID = WIFI_SSID_SECRET;
 const char* WIFI_PASSWORD = WIFI_PASSWORD_SECRET;
 const char* API_BASE_URL = "https://b4sm23mlze.execute-api.ap-southeast-5.amazonaws.com/prod";
 const char* SITE_ZONE = "Zone A - Pump Station";
-const char* FW_BUILD_ID = "FW_2026_06_05_WATER_SMOOTH_1300_1800";
+const char* FW_BUILD_ID = "FW_2026_06_08_LM393_GPIO13_DEMO_HOLD";
 
 // MQTT first, with optional HTTP fallback if MQTT publish fails.
 const bool USE_MQTT_UPLINK = true;
@@ -68,11 +68,14 @@ const char* AWS_IOT_PRIVATE_KEY = MQTT_DEVICE_PRIVATE_KEY;
 
 const int VIBRATION_SAMPLE_COUNT = 120;
 const unsigned long VIBRATION_SAMPLE_DELAY_US = 1000;
-const float VIBRATION_RMS_ADC_PER_UNIT = 12.0f;
-const float VIBRATION_NOISE_DEADBAND_ADC = 24.0f;
+const unsigned long VIBRATION_EDGE_DEBOUNCE_US = 15000;
+const unsigned int VIBRATION_EDGE_TRIGGER_MIN = 1;
+const int VIBRATION_ACTIVE_SAMPLE_TRIGGER_MIN = 1;
+const int VIBRATION_ACTIVE_STATE = LOW;
+const float VIBRATION_DIGITAL_BASE_LEVEL = 10.0f;
 const float VIBRATION_LEVEL_MAX = 20.0f;
-const uint8_t VIBRATION_BASELINE_WINDOWS = 40;
-const unsigned long VIBRATION_STARTUP_REZERO_MS = 12000;
+const unsigned long VIBRATION_DEMO_HOLD_MS = 1500;
+const unsigned long VIBRATION_STUCK_ACTIVE_IGNORE_MS = 1200;
 
 // Calibrate these two values using your own sensor:
 // 1) dryValue: sensor out of water
@@ -94,10 +97,15 @@ unsigned long wifiConnectStartMs = 0;
 unsigned long lastWaterPostMs = 0;
 unsigned long lastTempPostMs = 0;
 unsigned long lastVibrationPostMs = 0;
-int lastVibrationPeakToPeakAdc = 0;
-float lastVibrationRmsAdc = 0.0f;
-float vibrationBaselineRmsAdc = 0.0f;
-bool vibrationStartupRezeroDone = false;
+int lastVibrationActiveSamples = 0;
+int lastVibrationRawState = LOW;
+int lastVibrationEdgeCount = 0;
+float lastVibrationActiveRatio = 0.0f;
+int lastVibrationPollRawState = -1;
+unsigned long vibrationTriggeredUntilMs = 0;
+unsigned long vibrationActiveSinceMs = 0;
+volatile unsigned int vibrationEdgeCount = 0;
+volatile unsigned long lastVibrationEdgeUs = 0;
 
 enum AlertSeverity : uint8_t {
   ALERT_NONE = 0,
@@ -109,8 +117,10 @@ float filteredWaterAdc = NAN;
 AlertSeverity waterAlertState = ALERT_NONE;
 
 struct VibrationStats {
-  int peakToPeakAdc;
-  float rmsAdc;
+  int activeSamples;
+  int rawState;
+  int edgeCount;
+  float activeRatio;
 };
 
 float adcToWaterLevelPercent(int adcValue);
@@ -118,8 +128,8 @@ float updateWaterAdcFilter(int rawAdc);
 AlertSeverity waterSeverityForLevel(float value);
 void printWaterCalibrationStatus();
 VibrationStats readVibrationStats();
-void calibrateVibrationBaseline(uint8_t windows);
 float readVibrationLevel();
+void IRAM_ATTR onVibrationEdge();
 
 int waterCalDryCaptured = -1;
 int waterCalWetCaptured = -1;
@@ -444,8 +454,8 @@ AlertSeverity waterSeverityForLevel(float value) {
 void printVibrationCommandHelp() {
   Serial.println("VIB commands:");
   Serial.println("  VIB HELP          -> show this help");
-  Serial.println("  VIB ZERO          -> calibrate current still sensor as zero baseline");
-  Serial.println("  VIB STATUS        -> print current real sensor baseline");
+  Serial.println("  VIB STATUS        -> print current LM393 digital state");
+  Serial.println("Adjust the LM393 potentiometer if the DO output is always active or never active.");
   Serial.println("Water calibration: type WL HELP");
 }
 
@@ -475,22 +485,26 @@ void handleSerialCommands() {
   }
 
   if (upper == "VIB ZERO") {
-    Serial.println("VIB zero calibration: keep the sensor still...");
-    calibrateVibrationBaseline(VIBRATION_BASELINE_WINDOWS);
-    Serial.print("VIB zero baseline RMS_ADC=");
-    Serial.println(vibrationBaselineRmsAdc, 2);
+    Serial.println("VIB ZERO is not required in LM393 digital mode.");
+    Serial.println("Use VIB STATUS while tapping the module, then adjust the LM393 potentiometer if needed.");
     return;
   }
 
   if (upper == "VIB STATUS") {
-    Serial.print("VIB source=REAL_AO, baseline_rms_adc=");
-    Serial.print(vibrationBaselineRmsAdc, 2);
-    Serial.print(", last_rms_adc=");
-    Serial.print(lastVibrationRmsAdc, 2);
-    Serial.print(", adc_per_unit=");
-    Serial.print(VIBRATION_RMS_ADC_PER_UNIT, 2);
-    Serial.print(", deadband_adc=");
-    Serial.print(VIBRATION_NOISE_DEADBAND_ADC, 2);
+    Serial.print("VIB source=LM393_DO, pin=GPIO");
+    Serial.print(VIBRATION_SENSOR_DO_PIN);
+    Serial.print(", active_state=");
+    Serial.print(VIBRATION_ACTIVE_STATE == HIGH ? "HIGH" : "LOW");
+    Serial.print(", last_raw=");
+    Serial.print(lastVibrationRawState);
+    Serial.print(", active_samples=");
+    Serial.print(lastVibrationActiveSamples);
+    Serial.print(", edge_count=");
+    Serial.print(lastVibrationEdgeCount);
+    Serial.print(", active_ratio=");
+    Serial.print(lastVibrationActiveRatio, 3);
+    Serial.print(", base_level=");
+    Serial.print(VIBRATION_DIGITAL_BASE_LEVEL, 2);
     Serial.print(", max=");
     Serial.println(VIBRATION_LEVEL_MAX, 2);
     return;
@@ -599,54 +613,91 @@ void printWaterCalibrationStatus() {
   Serial.println("Use WL APPLY to test immediately without reflashing.");
 }
 
+void IRAM_ATTR onVibrationEdge() {
+  const unsigned long nowUs = micros();
+  if (nowUs - lastVibrationEdgeUs < VIBRATION_EDGE_DEBOUNCE_US) {
+    return;
+  }
+  lastVibrationEdgeUs = nowUs;
+  if (vibrationEdgeCount < 65535) {
+    vibrationEdgeCount++;
+  }
+}
+
 VibrationStats readVibrationStats() {
-  int minValue = 4095;
-  int maxValue = 0;
-  long sum = 0;
-  int samples[VIBRATION_SAMPLE_COUNT];
+  int activeSamples = 0;
+  int rawState = LOW;
+  int previousRawState = lastVibrationPollRawState;
+  if (previousRawState != LOW && previousRawState != HIGH) {
+    previousRawState = digitalRead(VIBRATION_SENSOR_DO_PIN);
+  }
+  unsigned int sampledEdges = 0;
 
   for (int i = 0; i < VIBRATION_SAMPLE_COUNT; i++) {
-    const int value = analogRead(VIBRATION_SENSOR_AO_PIN);
-    samples[i] = value;
-    sum += value;
-    if (value < minValue) minValue = value;
-    if (value > maxValue) maxValue = value;
+    rawState = digitalRead(VIBRATION_SENSOR_DO_PIN);
+    if (rawState != previousRawState) {
+      sampledEdges++;
+      previousRawState = rawState;
+    }
+    if (rawState == VIBRATION_ACTIVE_STATE) {
+      activeSamples++;
+    }
     delayMicroseconds(VIBRATION_SAMPLE_DELAY_US);
   }
 
-  const float mean = (float)sum / (float)VIBRATION_SAMPLE_COUNT;
-  float squareSum = 0.0f;
-  for (int i = 0; i < VIBRATION_SAMPLE_COUNT; i++) {
-    const float centered = (float)samples[i] - mean;
-    squareSum += centered * centered;
+  lastVibrationPollRawState = rawState;
+  const unsigned int latchedEdges = sampledEdges;
+  if (latchedEdges >= VIBRATION_EDGE_TRIGGER_MIN && activeSamples < VIBRATION_ACTIVE_SAMPLE_TRIGGER_MIN) {
+    activeSamples = VIBRATION_SAMPLE_COUNT;
+  } else if (activeSamples < VIBRATION_ACTIVE_SAMPLE_TRIGGER_MIN) {
+    activeSamples = 0;
   }
 
   VibrationStats stats;
-  stats.peakToPeakAdc = maxValue - minValue;
-  stats.rmsAdc = sqrt(squareSum / (float)VIBRATION_SAMPLE_COUNT);
+  stats.activeSamples = activeSamples;
+  stats.rawState = rawState;
+  stats.edgeCount = (int)latchedEdges;
+  stats.activeRatio = (float)activeSamples / (float)VIBRATION_SAMPLE_COUNT;
   return stats;
-}
-
-void calibrateVibrationBaseline(uint8_t windows) {
-  if (windows == 0) windows = 1;
-  float sum = 0.0f;
-  for (uint8_t i = 0; i < windows; i++) {
-    VibrationStats stats = readVibrationStats();
-    sum += stats.rmsAdc;
-  }
-  vibrationBaselineRmsAdc = sum / (float)windows;
 }
 
 float readVibrationLevel() {
   VibrationStats stats = readVibrationStats();
-  lastVibrationPeakToPeakAdc = stats.peakToPeakAdc;
-  lastVibrationRmsAdc = stats.rmsAdc;
+  lastVibrationActiveSamples = stats.activeSamples;
+  lastVibrationRawState = stats.rawState;
+  lastVibrationEdgeCount = stats.edgeCount;
+  lastVibrationActiveRatio = stats.activeRatio;
 
-  const float dynamicRmsAdc = stats.rmsAdc - vibrationBaselineRmsAdc;
-  if (dynamicRmsAdc <= VIBRATION_NOISE_DEADBAND_ADC) return 0.0f;
+  const unsigned long now = millis();
+  const bool rawIsActive = stats.rawState == VIBRATION_ACTIVE_STATE;
+  if (rawIsActive) {
+    if (vibrationActiveSinceMs == 0) {
+      vibrationActiveSinceMs = now;
+    }
+  } else {
+    vibrationActiveSinceMs = 0;
+  }
 
-  const float level = (dynamicRmsAdc - VIBRATION_NOISE_DEADBAND_ADC) / VIBRATION_RMS_ADC_PER_UNIT;
-  return clampVibrationLevel(level);
+  const bool stuckActive = rawIsActive
+      && vibrationActiveSinceMs != 0
+      && (now - vibrationActiveSinceMs) > VIBRATION_STUCK_ACTIVE_IGNORE_MS
+      && stats.edgeCount == 0;
+  if (stuckActive) {
+    vibrationTriggeredUntilMs = 0;
+    return 0.0f;
+  }
+
+  const bool vibrationTriggered =
+      stats.edgeCount >= VIBRATION_EDGE_TRIGGER_MIN ||
+      stats.activeSamples >= VIBRATION_ACTIVE_SAMPLE_TRIGGER_MIN;
+  if (vibrationTriggered) {
+    vibrationTriggeredUntilMs = now + VIBRATION_DEMO_HOLD_MS;
+  }
+
+  if (now < vibrationTriggeredUntilMs) {
+    return VIBRATION_LEVEL_MAX;
+  }
+  return 0.0f;
 }
 
 bool buzzerPulseOn(AlertSeverity severity, unsigned long elapsedMs) {
@@ -692,14 +743,13 @@ void setup() {
   delay(2000);  // DHT11 startup stabilization
 
   pinMode(WATER_SENSOR_AO_PIN, INPUT);
-  pinMode(VIBRATION_SENSOR_AO_PIN, INPUT);
+  pinMode(VIBRATION_SENSOR_DO_PIN, INPUT_PULLUP);
   pinMode(BUZZER_PIN, OUTPUT);
   digitalWrite(BUZZER_PIN, LOW);
 
 #if defined(ARDUINO_ARCH_ESP32)
   analogReadResolution(12);  // 0..4095
   analogSetPinAttenuation(WATER_SENSOR_AO_PIN, ADC_11db);
-  analogSetPinAttenuation(VIBRATION_SENSOR_AO_PIN, ADC_11db);
 #endif
 
   Serial.println("DHT11 + Water Level + Buzzer practice started.");
@@ -709,13 +759,16 @@ void setup() {
   Serial.println("Buzzer tones: WARNING slow pulse, CRITICAL rapid triple pulse.");
   Serial.print("FW WIFI_SSID=");
   Serial.println(WIFI_SSID);
-  Serial.println("Format: T=xx.x,H=yy.y,ADC_RAW=zzzz,ADC=zzzz,WL=pp.pp,VIB=n.nn,VIB_RMS_ADC=n.nn,VIB_ADC_PP=n,VIB_BASE_ADC=n.nn,VIB_SOURCE=text,SEVERITY=text,ALARM=ON/OFF,BUZZER=ON/OFF,ADC_FAULT=n,WATER_SHORT=n,STATUS=text");
-  Serial.println("VIB is a calibrated vibration RMS index from the AO signal on GPIO1.");
-  Serial.print("VIB adc_per_unit=");
-  Serial.print(VIBRATION_RMS_ADC_PER_UNIT, 2);
+  Serial.println("Format: T=xx.x,H=yy.y,ADC_RAW=zzzz,ADC=zzzz,WL=pp.pp,VIB=n.nn,VIB_ACTIVE=n,VIB_EDGE=n,VIB_RATIO=n.nn,VIB_RAW=n,VIB_SOURCE=text,SEVERITY=text,ALARM=ON/OFF,BUZZER=ON/OFF,ADC_FAULT=n,WATER_LOW_ADC=n,STATUS=text");
+  Serial.print("VIB is a digital vibration index from LM393 DO on GPIO");
+  Serial.print(VIBRATION_SENSOR_DO_PIN);
+  Serial.print(" with active_state=");
+  Serial.println(VIBRATION_ACTIVE_STATE == HIGH ? "HIGH." : "LOW.");
+  Serial.print("VIB base_level=");
+  Serial.print(VIBRATION_DIGITAL_BASE_LEVEL, 2);
   Serial.print(", VIB max=");
   Serial.println(VIBRATION_LEVEL_MAX, 2);
-  Serial.println("Vibration commands: VIB HELP / VIB ZERO / VIB STATUS");
+  Serial.println("Vibration commands: VIB HELP / VIB STATUS");
   Serial.println("Water calibration: WL HELP / WL DRY / WL WET / WL CAL / WL APPLY");
   Serial.println("Tip: if DHT stays nan, try DHT data pin on GPIO6/7 and keep common GND.");
 
@@ -738,25 +791,13 @@ void setup() {
   }
 #endif
 
-  Serial.println("Keep the vibration sensor still for baseline calibration...");
-  calibrateVibrationBaseline(VIBRATION_BASELINE_WINDOWS);
-  Serial.print("VIB baseline RMS_ADC=");
-  Serial.println(vibrationBaselineRmsAdc, 2);
-  Serial.println("Keep still again: VIB auto-zero will refine baseline after startup.");
+  Serial.println("LM393 vibration mode ready. Use VIB STATUS while tapping the sensor.");
 }
 
 void loop() {
   handleSerialCommands();
 
   unsigned long now = millis();
-  if (!vibrationStartupRezeroDone && now >= VIBRATION_STARTUP_REZERO_MS) {
-    vibrationStartupRezeroDone = true;
-    Serial.println("VIB startup auto-zero: keep the sensor still...");
-    calibrateVibrationBaseline(VIBRATION_BASELINE_WINDOWS);
-    Serial.print("VIB startup baseline RMS_ADC=");
-    Serial.println(vibrationBaselineRmsAdc, 2);
-  }
-
   if (now - lastWaterReadMs < WATER_READ_INTERVAL_MS) return;
   lastWaterReadMs = now;
 
@@ -786,13 +827,10 @@ void loop() {
   }
   const bool waterShortFault = waterShortFaultCount >= WATER_SHORT_CONSECUTIVE;
 
-  int waterAdc = isnan(filteredWaterAdc) ? rawWaterAdc : (int)(filteredWaterAdc + 0.5f);
-  if (!waterShortFault) {
-    waterAdc = (int)(updateWaterAdcFilter(rawWaterAdc) + 0.5f);
-  }
+  int waterAdc = (int)(updateWaterAdcFilter(rawWaterAdc) + 0.5f);
   float waterLevelPercent = adcToWaterLevelPercent(waterAdc);
   float vibrationLevel = readVibrationLevel();
-  const bool waterAdcOutOfRange = !waterShortFault && (waterAdc < ADC_FAULT_LOW || waterAdc > ADC_FAULT_HIGH);
+  const bool waterAdcOutOfRange = waterAdc > ADC_FAULT_HIGH;
   if (waterAdcOutOfRange) {
     if (waterAdcFaultCount < 255) waterAdcFaultCount++;
   } else {
@@ -804,9 +842,8 @@ void loop() {
       ? ALERT_NONE
       : severityForValue(tempC, TEMP_WARNING_C, TEMP_CRITICAL_C);
   if (waterAdcFault) waterAlertState = ALERT_NONE;
-  const AlertSeverity waterSeverity = waterShortFault
-      ? ALERT_CRITICAL
-      : (waterAdcFault ? ALERT_NONE : waterSeverityForLevel(waterLevelPercent));
+  const AlertSeverity waterSeverity =
+      waterAdcFault ? ALERT_NONE : waterSeverityForLevel(waterLevelPercent);
   const AlertSeverity vibrationSeverity =
       severityForValue(vibrationLevel, VIBRATION_WARNING_LEVEL, VIBRATION_CRITICAL_LEVEL);
   const AlertSeverity alertSeverity =
@@ -836,13 +873,16 @@ void loop() {
   if (waterLevelPercent < 0) Serial.print("nan"); else Serial.print(waterLevelPercent, 2);
   Serial.print(",VIB=");
   Serial.print(vibrationLevel, 2);
-  Serial.print(",VIB_RMS_ADC=");
-  Serial.print(lastVibrationRmsAdc, 2);
-  Serial.print(",VIB_ADC_PP=");
-  Serial.print(lastVibrationPeakToPeakAdc);
-  Serial.print(",VIB_BASE_ADC=");
-  Serial.print(vibrationBaselineRmsAdc, 2);
-  Serial.print(",VIB_SOURCE=REAL_AO");
+  Serial.print(",VIB_ACTIVE=");
+  Serial.print(lastVibrationActiveSamples);
+  Serial.print(",VIB_EDGE=");
+  Serial.print(lastVibrationEdgeCount);
+  Serial.print(",VIB_RATIO=");
+  Serial.print(lastVibrationActiveRatio, 3);
+  Serial.print(",VIB_RAW=");
+  Serial.print(lastVibrationRawState);
+  Serial.print(",VIB_SOURCE=LM393_DO_GPIO");
+  Serial.print(VIBRATION_SENSOR_DO_PIN);
   Serial.print(",SEVERITY=");
   Serial.print(alertSeverityLabel(alertSeverity));
   Serial.print(",ALARM=");
@@ -851,7 +891,7 @@ void loop() {
   Serial.print(buzzerOutputOn ? "ON" : "OFF");
   Serial.print(",ADC_FAULT=");
   Serial.print(waterAdcFaultCount);
-  Serial.print(",WATER_SHORT=");
+  Serial.print(",WATER_LOW_ADC=");
   Serial.print(waterShortFaultCount);
   Serial.print(",CLOUD_SILENCE=");
   Serial.print(cloudBuzzerSilenced ? "ON" : "OFF");
@@ -860,7 +900,7 @@ void loop() {
   if (isnan(tempC) || isnan(hum)) {
     Serial.println("DHT_ERR");
   } else if (waterShortFault) {
-    Serial.println("WATER_SHORT_OR_SUBMERGED");
+    Serial.println("WATER_LOW_ADC_DIAGNOSTIC");
   } else if (waterAdcFault) {
     Serial.println("WATER_WIRING_OR_PIN_ERR");
   } else {
@@ -873,7 +913,7 @@ void loop() {
       mqttClient.loop();
     }
 
-    if (!waterAdcFault && !waterShortFault && (now - lastWaterPostMs >= WATER_POST_INTERVAL_MS)) {
+    if (!waterAdcFault && (now - lastWaterPostMs >= WATER_POST_INTERVAL_MS)) {
       if (sendReadingToCloud("waterLevel", waterLevelPercent)) {
         lastWaterPostMs = now;
       }

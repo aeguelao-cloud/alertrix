@@ -7,6 +7,7 @@ import '../models/monitoring_models.dart';
 import '../services/trend_history_api.dart';
 import '../theme/severity_colors.dart';
 import '../utils/relative_time.dart';
+import '../utils/ui_formatters.dart' show normalizeSensorDisplayValue;
 import '../widgets/alert_card.dart';
 import '../widgets/dashboard_layout.dart';
 import '../widgets/device_status_card.dart';
@@ -89,10 +90,25 @@ class _DashboardPageState extends State<DashboardPage> {
     final snapshot = widget.snapshot;
     final alerts = snapshot.alerts;
     final readings = snapshot.readings;
-    final incidentGroups = _aggregateIncidentGroups(alerts);
     final overview = snapshot.overview;
+    final liveStatus =
+        overview?.systemStatus ?? _liveStatusFromReadings(readings);
+    final hasLiveStatus = liveStatus != null;
+    final localCriticalCount =
+        readings.where((r) => r.level == SensorLevel.critical).length;
+    final localWarningCount =
+        readings.where((r) => r.level == SensorLevel.warning).length;
+    final liveCriticalCount =
+        overview?.criticalQueue ?? (hasLiveStatus ? localCriticalCount : 0);
+    final liveWarningCount =
+        overview?.warningQueue ?? (hasLiveStatus ? localWarningCount : 0);
+    final incidentGroups = _aggregateIncidentGroups(alerts);
 
     final incident = _topIncident(alerts);
+    final currentIncident = liveStatus == DashboardSystemStatus.normal ||
+            liveStatus == DashboardSystemStatus.noTelemetry
+        ? null
+        : incident;
     final fallbackCriticalCount = incidentGroups
         .where((e) => e.source.severity == SensorLevel.critical)
         .length;
@@ -123,18 +139,32 @@ class _DashboardPageState extends State<DashboardPage> {
         : (incident.severity == SensorLevel.critical
             ? UiBadgeTone.critical
             : UiBadgeTone.warning);
-    final criticalCount = overview?.criticalQueue ?? fallbackCriticalCount;
-    final warningCount = overview?.warningQueue ?? fallbackWarningCount;
-    final openAlerts = overview?.activeIncidents ?? fallbackOpenAlerts;
+    final criticalCount =
+        hasLiveStatus ? liveCriticalCount : fallbackCriticalCount;
+    final warningCount =
+        hasLiveStatus ? liveWarningCount : fallbackWarningCount;
+    final openAlerts = overview?.activeIncidents ??
+        (hasLiveStatus
+            ? liveCriticalCount + liveWarningCount
+            : fallbackOpenAlerts);
     final telemetryCoverageValue =
         overview?.telemetryCoverage ?? telemetryCoverage;
-    final telemetryStatus =
+    final telemetryStatus = liveStatus?.label ??
         _telemetryStatusLabel(overview, fallbackTelemetryStatus);
-    final riskLabel = overview?.currentRiskLabel ?? fallbackRiskLabel;
-    final riskTone = _riskTone(overview, fallbackRiskTone);
-    final systemStatusLabel = _systemStatusLabel(overview, riskLabel);
-    final systemStatusTone = _systemTone(overview, riskTone);
-    final systemStatusIcon = _systemIcon(overview, incident);
+    final riskLabel = liveStatus != null
+        ? _riskLabelForStatus(liveStatus)
+        : (overview?.currentRiskLabel ?? fallbackRiskLabel);
+    final riskTone = liveStatus != null
+        ? _toneForSystemStatus(liveStatus)
+        : _riskTone(overview, fallbackRiskTone);
+    final systemStatusLabel =
+        liveStatus?.label ?? _systemStatusLabel(overview, riskLabel);
+    final systemStatusTone = liveStatus != null
+        ? _toneForSystemStatus(liveStatus)
+        : _systemTone(overview, riskTone);
+    final systemStatusIcon = liveStatus != null
+        ? _iconForSystemStatus(liveStatus)
+        : _systemIcon(overview, currentIncident);
     final fallbackSeries =
         _seriesFor(_selectedMetric, snapshot.history, _selectedRange);
     final remoteSeries = _remoteTrendCache[
@@ -149,10 +179,10 @@ class _DashboardPageState extends State<DashboardPage> {
         : (_useRemoteTrend ? 'Local snapshot fallback' : 'Local snapshot');
 
     final incidentCard = _IncidentCard(
-      incident: incident,
-      onOpenIncident: incident == null
+      incident: currentIncident,
+      onOpenIncident: currentIncident == null
           ? widget.onNavigateToAlerts
-          : () => widget.onOpenAlertDetail(incident),
+          : () => widget.onOpenAlertDetail(currentIncident),
       onNavigateToAlerts: widget.onNavigateToAlerts,
       alertsLabel: widget.alertsLabel,
     );
@@ -175,15 +205,16 @@ class _DashboardPageState extends State<DashboardPage> {
     );
     final emergencyBanner = _EmergencyBanner(
       overview: overview,
-      incident: incident,
+      liveStatus: liveStatus,
+      incident: currentIncident,
       criticalCount: criticalCount,
       warningCount: warningCount,
       alertsLabel: widget.alertsLabel,
       onOpenDeviceManagement: widget.onNavigateToDevices,
       onRetrySync: widget.onRetrySync,
-      onOpenIncident: incident == null
+      onOpenIncident: currentIncident == null
           ? widget.onNavigateToAlerts
-          : () => widget.onOpenAlertDetail(incident),
+          : () => widget.onOpenAlertDetail(currentIncident),
       onOpenQueue: widget.onNavigateToAlerts,
     );
     final trendsCard = _TrendsCard(
@@ -250,12 +281,11 @@ class _DashboardPageState extends State<DashboardPage> {
                   _SummaryData(
                     title: 'Current Risk',
                     value: riskLabel,
-                    helper: overview?.systemStatus ==
-                            DashboardSystemStatus.noTelemetry
+                    helper: liveStatus == DashboardSystemStatus.noTelemetry
                         ? 'Status: No live telemetry'
-                        : (incident == null
+                        : (currentIncident == null
                             ? 'No active critical incident'
-                            : '${incident.zone} requires attention'),
+                            : '${currentIncident.zone} requires attention'),
                     tone: riskTone,
                   ),
                   _SummaryData(
@@ -286,8 +316,7 @@ class _DashboardPageState extends State<DashboardPage> {
                     title: 'Telemetry Coverage',
                     value: '$telemetryCoverageValue%',
                     helper: '$availableAssets/$totalAssets assets reporting',
-                    tone: overview?.systemStatus ==
-                            DashboardSystemStatus.noTelemetry
+                    tone: liveStatus == DashboardSystemStatus.noTelemetry
                         ? UiBadgeTone.noTelemetry
                         : (unavailableAssets == 0
                             ? UiBadgeTone.healthy
@@ -446,6 +475,48 @@ class _DashboardPageState extends State<DashboardPage> {
       if (reading.type == type) return reading;
     }
     return null;
+  }
+
+  static DashboardSystemStatus? _liveStatusFromReadings(
+      List<SensorReading> readings) {
+    if (readings.isEmpty) return null;
+    for (final type in activeSensorTypes) {
+      if (_readingByType(readings, type) == null) return null;
+    }
+    if (readings.any((r) => r.level == SensorLevel.critical)) {
+      return DashboardSystemStatus.critical;
+    }
+    if (readings.any((r) => r.level == SensorLevel.warning)) {
+      return DashboardSystemStatus.warning;
+    }
+    return DashboardSystemStatus.normal;
+  }
+
+  static String _riskLabelForStatus(DashboardSystemStatus status) {
+    return switch (status) {
+      DashboardSystemStatus.noTelemetry => 'Unknown',
+      DashboardSystemStatus.normal => 'Normal',
+      DashboardSystemStatus.warning => 'Warning',
+      DashboardSystemStatus.critical => 'Critical',
+    };
+  }
+
+  static UiBadgeTone _toneForSystemStatus(DashboardSystemStatus status) {
+    return switch (status) {
+      DashboardSystemStatus.noTelemetry => UiBadgeTone.noTelemetry,
+      DashboardSystemStatus.normal => UiBadgeTone.healthy,
+      DashboardSystemStatus.warning => UiBadgeTone.warning,
+      DashboardSystemStatus.critical => UiBadgeTone.critical,
+    };
+  }
+
+  static IconData _iconForSystemStatus(DashboardSystemStatus status) {
+    return switch (status) {
+      DashboardSystemStatus.noTelemetry => Icons.cloud_off_rounded,
+      DashboardSystemStatus.normal => Icons.verified_rounded,
+      DashboardSystemStatus.warning => Icons.warning_amber_rounded,
+      DashboardSystemStatus.critical => Icons.crisis_alert_rounded,
+    };
   }
 
   static String _hhmm(DateTime dt) {
@@ -965,7 +1036,7 @@ class _SensorNoTelemetryCard extends StatelessWidget {
       case SensorType.waterLevel:
         return '${value.toStringAsFixed(2)}%';
       case SensorType.vibration:
-        return '${value.toStringAsFixed(2)} mm/s RMS';
+        return '${value.toStringAsFixed(2)} index';
       case SensorType.temperature:
         return '${value.toStringAsFixed(2)}deg C';
     }
@@ -985,6 +1056,7 @@ class _SensorNoTelemetryCard extends StatelessWidget {
 class _EmergencyBanner extends StatelessWidget {
   const _EmergencyBanner({
     required this.overview,
+    required this.liveStatus,
     required this.incident,
     required this.criticalCount,
     required this.warningCount,
@@ -996,6 +1068,7 @@ class _EmergencyBanner extends StatelessWidget {
   });
 
   final DashboardOverview? overview;
+  final DashboardSystemStatus? liveStatus;
   final AlertEvent? incident;
   final int criticalCount;
   final int warningCount;
@@ -1007,7 +1080,8 @@ class _EmergencyBanner extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final systemStatus = overview?.systemStatus;
+    final systemStatus = liveStatus ?? overview?.systemStatus;
+    final usingLiveStatus = liveStatus != null;
     final noTelemetry = systemStatus == DashboardSystemStatus.noTelemetry;
     final critical = systemStatus == DashboardSystemStatus.critical ||
         (systemStatus == null && criticalCount > 0);
@@ -1030,7 +1104,7 @@ class _EmergencyBanner extends StatelessWidget {
       UiBadgeTone.noTelemetry => const Color(0xFFCBD8DF),
       _ => SeverityColors.normalBorder,
     };
-    final banner = overview?.banner;
+    final banner = usingLiveStatus ? null : overview?.banner;
     final title = banner?.title ??
         (critical
             ? 'Critical incident response required'
@@ -1039,7 +1113,9 @@ class _EmergencyBanner extends StatelessWidget {
                 : 'System operating normally'));
     final detail = banner?.message ??
         (incident == null
-            ? 'No high-priority incident in the queue.'
+            ? (usingLiveStatus
+                ? 'Latest water level, vibration, and temperature readings are within safe thresholds.'
+                : 'No high-priority incident in the queue.')
             : '${_formatAlertTitle(incident!.title)} in ${incident!.zone} - ${formatIncidentRelativeTime(incident!.timestamp)}');
     final icon = noTelemetry
         ? Icons.cloud_off_rounded
@@ -1470,7 +1546,7 @@ class _RecentReadingsCard extends StatelessWidget {
       case SensorType.waterLevel:
         return '${value.toStringAsFixed(0)}%';
       case SensorType.vibration:
-        return '${value.toStringAsFixed(1)} mm/s RMS';
+        return '${value.toStringAsFixed(1)} index';
       case SensorType.temperature:
         return '${value.toStringAsFixed(1)}deg C';
     }
@@ -1744,7 +1820,7 @@ class _TrendsCard extends StatelessWidget {
       case SensorType.waterLevel:
         return 'Warning threshold: 70% | Critical threshold: 85%';
       case SensorType.vibration:
-        return 'Warning threshold: 2.8 mm/s RMS | Critical threshold: 4.0 mm/s RMS';
+        return 'Warning threshold: 10.0 index | Critical threshold: 14.0 index';
       case SensorType.temperature:
         return 'Warning threshold: 35deg C | Critical threshold: 40deg C';
     }
@@ -1755,7 +1831,7 @@ class _TrendsCard extends StatelessWidget {
       case SensorType.waterLevel:
         return 70;
       case SensorType.vibration:
-        return 2.8;
+        return 10.0;
       case SensorType.temperature:
         return 35;
     }
@@ -1766,7 +1842,7 @@ class _TrendsCard extends StatelessWidget {
       case SensorType.waterLevel:
         return 85;
       case SensorType.vibration:
-        return 4.0;
+        return 14.0;
       case SensorType.temperature:
         return 40;
     }
@@ -1777,7 +1853,7 @@ class _TrendsCard extends StatelessWidget {
       case SensorType.waterLevel:
         return '${value.toStringAsFixed(0)}%';
       case SensorType.vibration:
-        return '${value.toStringAsFixed(1)} mm/s RMS';
+        return '${value.toStringAsFixed(1)} index';
       case SensorType.temperature:
         return '${value.toStringAsFixed(1)}deg C';
     }
@@ -2170,7 +2246,7 @@ String _sensorIdForAlert(AlertEvent alert) {
 String _measuredValueForAlert(AlertEvent alert) {
   final value = alert.triggerValue?.trim();
   if (value == null || value.isEmpty) return 'Not reported';
-  return value;
+  return normalizeSensorDisplayValue(value);
 }
 
 String _thresholdForAlert(String title, SensorLevel severity) {
@@ -2180,7 +2256,7 @@ String _thresholdForAlert(String title, SensorLevel severity) {
     return critical ? 'Critical 85%' : 'Warning 70%';
   }
   if (lower.contains('vibration')) {
-    return critical ? 'Critical 4.0 mm/s RMS' : 'Warning 2.8 mm/s RMS';
+    return critical ? 'Critical 14.0 index' : 'Warning 10.0 index';
   }
   if (lower.contains('temp')) {
     return critical ? 'Critical 40deg C' : 'Warning 35deg C';
@@ -2193,7 +2269,7 @@ String _formatSensorValue(double value, SensorType type) {
     case SensorType.waterLevel:
       return '${value.toStringAsFixed(0)}%';
     case SensorType.vibration:
-      return '${value.toStringAsFixed(1)} mm/s RMS';
+      return '${value.toStringAsFixed(1)} index';
     case SensorType.temperature:
       return '${value.toStringAsFixed(1)}deg C';
   }

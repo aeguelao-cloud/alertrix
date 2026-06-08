@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 
+import '../utils/ui_formatters.dart' show normalizeSensorDisplayValue;
 import '../widgets/ui_kit.dart';
 
 class WorkOrdersPage extends StatefulWidget {
@@ -220,7 +221,8 @@ class _WorkOrdersPageState extends State<WorkOrdersPage> {
     final issueTitle = item.alertInfo?.title ?? 'No linked alert detail';
     final severityText = _normalizeSeverity(item.alertInfo?.severity);
     final zoneText = item.alertInfo?.zone ?? '--';
-    final triggerText = item.alertInfo?.triggerValue ?? '--';
+    final triggerText =
+        normalizeSensorDisplayValue(item.alertInfo?.triggerValue ?? '--');
     final timeText = item.alertInfo?.detectedAt ?? '--';
     final priority = _priorityLabel(item, severityText);
     final priorityTone = _priorityTone(priority);
@@ -292,7 +294,8 @@ class _WorkOrdersPageState extends State<WorkOrdersPage> {
     final issueTitle = item.alertInfo?.title ?? 'No linked alert detail';
     final severityText = _normalizeSeverity(item.alertInfo?.severity);
     final zoneText = item.alertInfo?.zone ?? '--';
-    final triggerText = item.alertInfo?.triggerValue ?? '--';
+    final triggerText =
+        normalizeSensorDisplayValue(item.alertInfo?.triggerValue ?? '--');
     final priority = _priorityLabel(item, severityText);
     final priorityTone = _priorityTone(priority);
     final statusTone = _statusTone(item.status);
@@ -350,7 +353,8 @@ class _WorkOrdersPageState extends State<WorkOrdersPage> {
     final issueTitle = item.alertInfo?.title ?? 'No linked alert detail';
     final severityText = _normalizeSeverity(item.alertInfo?.severity);
     final zoneText = item.alertInfo?.zone ?? '--';
-    final triggerText = item.alertInfo?.triggerValue ?? '--';
+    final triggerText =
+        normalizeSensorDisplayValue(item.alertInfo?.triggerValue ?? '--');
     final timeText = item.alertInfo?.detectedAt ?? '--';
     final priority = _priorityLabel(item, severityText);
     await showDialog<void>(
@@ -438,7 +442,9 @@ class _WorkOrdersPageState extends State<WorkOrdersPage> {
             title: alert['title']?.toString() ?? '--',
             severity: alert['severity']?.toString() ?? '--',
             zone: alert['zone']?.toString() ?? '--',
-            triggerValue: alert['triggerValue']?.toString() ?? '--',
+            triggerValue: normalizeSensorDisplayValue(
+              alert['triggerValue']?.toString() ?? '--',
+            ),
             detectedAt:
                 _WorkOrderItem.formatTime(alert['detectedAt']?.toString()),
           );

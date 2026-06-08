@@ -282,7 +282,7 @@ function sensorUnit(sensorType) {
     case "waterLevel":
       return "%";
     case "vibration":
-      return "mm/s RMS";
+      return "index";
     case "temperature":
       return "deg C";
     default:

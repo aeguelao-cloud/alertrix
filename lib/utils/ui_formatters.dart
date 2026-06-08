@@ -20,7 +20,7 @@ double warningThreshold(SensorType type) {
     case SensorType.waterLevel:
       return 70;
     case SensorType.vibration:
-      return 2.8;
+      return 10.0;
     case SensorType.temperature:
       return 35;
   }
@@ -31,7 +31,7 @@ double criticalThreshold(SensorType type) {
     case SensorType.waterLevel:
       return 85;
     case SensorType.vibration:
-      return 4.0;
+      return 14.0;
     case SensorType.temperature:
       return 40;
   }
@@ -42,7 +42,7 @@ String displayUnit(SensorType type) {
     case SensorType.waterLevel:
       return '%';
     case SensorType.vibration:
-      return 'mm/s RMS';
+      return 'index';
     case SensorType.temperature:
       return 'deg C';
   }
@@ -53,10 +53,19 @@ String formatSensorValue(double value, SensorType type) {
     case SensorType.waterLevel:
       return '${value.toStringAsFixed(0)}%';
     case SensorType.vibration:
-      return '${value.toStringAsFixed(1)} mm/s RMS';
+      return '${value.toStringAsFixed(1)} index';
     case SensorType.temperature:
       return '${value.toStringAsFixed(1)}deg C';
   }
+}
+
+String normalizeSensorDisplayValue(String raw) {
+  final value = raw.trim();
+  if (value.isEmpty) return value;
+  return value.replaceAllMapped(
+    RegExp(r'(\d+(?:\.\d+)?)\s*index\b', caseSensitive: false),
+    (match) => '${match.group(1)} index',
+  );
 }
 
 SensorType inferSensorTypeFromAlertTitle(String title) {
@@ -76,4 +85,3 @@ String titleCaseAlert(String raw) {
       .trim();
   return '${normalized[0].toUpperCase()}${normalized.substring(1)}';
 }
-

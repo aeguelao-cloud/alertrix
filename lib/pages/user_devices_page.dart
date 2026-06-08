@@ -220,7 +220,7 @@ class _UserDeviceRow {
       case SensorType.waterLevel:
         return '${value.toStringAsFixed(0)}%';
       case SensorType.vibration:
-        return '${value.toStringAsFixed(1)} mm/s RMS';
+        return '${value.toStringAsFixed(1)} index';
       case SensorType.temperature:
         return '${value.toStringAsFixed(1)}deg C';
     }

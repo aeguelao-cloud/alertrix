@@ -9,7 +9,7 @@ const ssm = new SSMClient({});
 
 const defaultThresholds = {
   waterLevel: { warning: 70, critical: 85, unit: "%" },
-  vibration: { warning: 10.0, critical: 14.0, unit: "mm/s RMS" },
+  vibration: { warning: 10.0, critical: 14.0, unit: "index" },
   temperature: { warning: 35, critical: 40, unit: "°C" },
 };
 
@@ -80,13 +80,16 @@ function mergeThresholds(candidate) {
     if (!row || typeof row !== "object") continue;
     const warning = Number(row.warning);
     const critical = Number(row.critical);
+    const unit =
+      key === "vibration"
+        ? defaultThresholds[key].unit
+        : typeof row.unit === "string" && row.unit.trim().length > 0
+          ? row.unit.trim()
+          : defaultThresholds[key].unit;
     normalized[key] = {
       warning: Number.isFinite(warning) ? warning : defaultThresholds[key].warning,
       critical: Number.isFinite(critical) ? critical : defaultThresholds[key].critical,
-      unit:
-        typeof row.unit === "string" && row.unit.trim().length > 0
-          ? row.unit.trim()
-          : defaultThresholds[key].unit,
+      unit,
     };
   }
   return normalized;

@@ -568,7 +568,7 @@ class _TrendsPageState extends State<TrendsPage> {
       case SensorType.waterLevel:
         return 70;
       case SensorType.vibration:
-        return 2.8;
+        return 10.0;
       case SensorType.temperature:
         return 35;
     }
@@ -579,7 +579,7 @@ class _TrendsPageState extends State<TrendsPage> {
       case SensorType.waterLevel:
         return 85;
       case SensorType.vibration:
-        return 4.0;
+        return 14.0;
       case SensorType.temperature:
         return 40;
     }
@@ -590,7 +590,7 @@ class _TrendsPageState extends State<TrendsPage> {
       case SensorType.waterLevel:
         return 'Warning threshold: 70% | Critical threshold: 85%';
       case SensorType.vibration:
-        return 'Warning threshold: 2.8 mm/s RMS | Critical threshold: 4.0 mm/s RMS';
+        return 'Warning threshold: 10.0 index | Critical threshold: 14.0 index';
       case SensorType.temperature:
         return 'Warning threshold: 35deg C | Critical threshold: 40deg C';
     }
@@ -636,7 +636,7 @@ class _TrendsPageState extends State<TrendsPage> {
       case SensorType.waterLevel:
         return '${value.toStringAsFixed(0)}%';
       case SensorType.vibration:
-        return '${value.toStringAsFixed(1)} mm/s RMS';
+        return '${value.toStringAsFixed(1)} index';
       case SensorType.temperature:
         return '${value.toStringAsFixed(1)}deg C';
     }

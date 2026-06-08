@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../models/auth_models.dart';
 import '../models/monitoring_models.dart';
+import '../utils/ui_formatters.dart' show normalizeSensorDisplayValue;
 
 String formatDateTime(DateTime dt) {
   final y = dt.year.toString().padLeft(4, '0');
@@ -17,7 +18,7 @@ double warningThreshold(SensorType type) {
     case SensorType.waterLevel:
       return 70;
     case SensorType.vibration:
-      return 2.8;
+      return 10.0;
     case SensorType.temperature:
       return 35;
   }
@@ -28,7 +29,7 @@ double criticalThreshold(SensorType type) {
     case SensorType.waterLevel:
       return 85;
     case SensorType.vibration:
-      return 4.0;
+      return 14.0;
     case SensorType.temperature:
       return 40;
   }
@@ -39,7 +40,7 @@ String formatSensorValue(double value, SensorType type) {
     case SensorType.waterLevel:
       return '${value.toStringAsFixed(0)}%';
     case SensorType.vibration:
-      return '${value.toStringAsFixed(1)} mm/s RMS';
+      return '${value.toStringAsFixed(1)} index';
     case SensorType.temperature:
       return '${value.toStringAsFixed(1)}deg C';
   }
@@ -120,7 +121,7 @@ class _AlertDetailPageState extends State<AlertDetailPage> {
   String get _currentValueText {
     final raw = widget.alert.triggerValue?.trim();
     if (raw == null || raw.isEmpty) return 'No data';
-    return raw;
+    return normalizeSensorDisplayValue(raw);
   }
 
   double? get _currentValueNumber {
@@ -414,7 +415,7 @@ class _AlertDetailPageState extends State<AlertDetailPage> {
         : (event.severity == SensorLevel.warning
             ? const Color(0xFFE09D25)
             : const Color(0xFF2F8F46));
-    final primary = event.measuredValue ?? '--';
+    final primary = normalizeSensorDisplayValue(event.measuredValue ?? '--');
     final meta = [
       if (event.zone != null && event.zone!.trim().isNotEmpty) event.zone!,
       if (event.deviceId != null && event.deviceId!.trim().isNotEmpty)

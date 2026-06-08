@@ -306,10 +306,10 @@ class _SettingsPageState extends State<SettingsPage> {
             _ThresholdGroupCard(
               icon: Icons.vibration_outlined,
               title: 'Vibration',
-              unit: 'mm/s RMS',
+              unit: 'index',
               warningValue: _vibrationWarning.toStringAsFixed(1),
               criticalValue: _vibrationCritical.toStringAsFixed(1),
-              basis: 'Prototype calibration',
+              basis: 'LM393 digital trigger index',
               actionLabel: 'Manage',
               onTap: _openVibrationThresholdEditor,
             ),
@@ -455,7 +455,7 @@ class _SettingsPageState extends State<SettingsPage> {
       MaterialPageRoute(
         builder: (_) => _ThresholdEditorPage(
           title: 'Edit Vibration Thresholds',
-          unit: 'mm/s RMS',
+          unit: 'index',
           warning: _vibrationWarning,
           critical: _vibrationCritical,
           editable: _isAdmin,
@@ -770,7 +770,8 @@ class _SettingsPageState extends State<SettingsPage> {
     } catch (_) {
       if (!mounted) return false;
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Failed to save system settings to backend')),
+        const SnackBar(
+            content: Text('Failed to save system settings to backend')),
       );
       return false;
     }
